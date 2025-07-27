@@ -29,9 +29,10 @@ app.add_middleware(JWTAuthMiddleware)
 
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return {"message": "Welcome to Optiven Backend"}
+
  
 # import uvicorn
  
