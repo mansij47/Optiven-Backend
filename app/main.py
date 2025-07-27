@@ -17,9 +17,14 @@ router.include_router(auth_routes.router, tags=["Auth"], prefix="/api/auth")
 
 app.include_router(router)
 
+origins = [
+    "http://localhost:5173",  # local dev
+    "https://optiven-frontend-1.onrender.com",  # production frontend
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # NOT "*"
+    allow_origins=origins,  # NOT "*"
     allow_methods=["*"],
     allow_headers=["*"],
     allow_credentials=True,
