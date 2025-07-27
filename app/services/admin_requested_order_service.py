@@ -1,6 +1,7 @@
 from datetime import datetime
 from fastapi import HTTPException
 from app.db import db
+from app.services.notification_service import create_notification
 from app.utils.raise_order import generate_request_id  # Motor async MongoDB client
 
 
@@ -94,5 +95,30 @@ async def raise_order_request_service(data: dict, org_id: str, store_id: str, re
     }
 
     await db.RequestedOrders.insert_one(request_doc)
+    
+    # import app.services.notification_service as notification_service
+    
+    # notification = {
+    #     "sender": {
+    #         "id": requested_by.get("id"),
+    #         "name": requested_by.get("name")
+    #     },
+    #     "receiver": [
+    #         {
+    #             "id": user.get("id"),
+    #             "name": user.get("name")
+    #         }
+    #         for user in await db.Users.find({"role": "admin"}).to_list()
+    #     ],
+    #     "type_of_notification": "order_request",
+    #     "title": f"New Order Request: {data['product_name']}",
+    #     "message": f"An order request has been raised for {data['quantity']} {data.get('unit', 'pcs')} of {data['product_name']}.",
+    #     "status": 0,
+    #     "time": datetime.utcnow().strftime("%H:%M:%S"),
+    #     "date": datetime.utcnow().strftime("%Y-%m-%d")
+    # }
+    
+
+    # notification_service.create_notifications_service(notification)
 
     return {"message": "Request raised successfully", "request_id": request_id}

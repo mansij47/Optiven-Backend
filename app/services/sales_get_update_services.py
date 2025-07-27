@@ -4,7 +4,7 @@ from app.models.sales_model import ProductDetails, SalesOrderDetails, SalesProdu
 from app.services.sales_add_raise_services import fetch_inventory_details
 from fastapi import HTTPException
 from app.utils.sales_utils import build_product_detail, parse_return_status, parse_status_string
-
+from bson.son import SON
 async def get_all_sales_orders(store_id: str):
     orders = await db.SalesOrders.find(
         {"order_status": "0", "store_id": store_id},
@@ -264,11 +264,15 @@ async def get_all_procurement_returns(store_id: str):
         result.append(r)  # Append the entire document as it is
     return result
 
-async def get_procurement_return_by_id(return_id: str , store_id: str):
+async def get_procurement_return_by_id(return_id: str, store_id: str):
     return await db.ReturnOrders.find_one(
-    {"return_id": return_id, "store_id": store_id},
-    {"_id": 0}
-)
+        {
+            "return_id": return_id,
+            "store_id": store_id,
+            "sent_to_procurement": 1  # Only fetch if sent_to_procurement is 1
+        },
+        {"_id": 0}
+    )
 
 
 async def get_product_details_service(store_id: str, product_id: Optional[str] = None, product_name: Optional[str] = None) -> ProductDetails:
@@ -349,7 +353,7 @@ async def get_sold_order_by_id(order_id: str, store_id: str):
 
 
 async def get_sales_dashboard_summary(store_id: str):
-    # Get received orders
+    # Get received (pending) orders
     received_orders = await db.SalesOrders.find(
         {"store_id": store_id, "order_status": "0"},
         {"_id": 0, "total_order_price": 1}
@@ -381,7 +385,11 @@ async def get_sales_dashboard_summary(store_id: str):
     }
 async def get_sales_order_by_id(order_id: str, store_id: str):
     order = await db.SalesOrders.find_one(
-        {"order_id": order_id, "order_status": "0", "store_id": store_id},
+         {
+            "order_id": order_id,
+            "store_id": store_id,
+            "order_status": {"$in": ["0", "1"]},  # Allow both statuses
+        },
         {"_id": 0}
     )
 
@@ -435,7 +443,6 @@ async def get_sales_dashboard_summary(store_id: str):
     total_sold = len(sold_orders)
     total_orders = total_received + total_sold
 
-    # Calculate total price sum of sold orders
     sold_price_sum = 0.0
     for order in sold_orders:
         try:
@@ -447,5 +454,71 @@ async def get_sales_dashboard_summary(store_id: str):
         "total_orders": total_orders,
         "received_orders": total_received,
         "sold_orders": total_sold,
-        "sold_order_total_price": round(sold_price_sum, 2)
+        "sold_order_total_price": round(sold_price_sum, 2),
+        "return_orders": return_orders_count
     }
+
+async def get_sold_orders_by_month(store_id: str):
+    """
+    Aggregates sold orders (order_status=1) by month and year.
+    Returns a list of {month, year, count}.
+    """
+    pipeline = [
+        {
+            "$match": {
+                "store_id": store_id,
+                "order_status": "1"
+            }
+        },
+        {
+            "$group": {
+                "_id": {
+                    "year": {"$year": "$order_date"},
+                    "month": {"$month": "$order_date"}
+                },
+                "count": {"$sum": 1}
+            }
+        },
+        {"$sort": SON([("_id.year", 1), ("_id.month", 1)])}
+    ]
+
+    result = await db.SalesOrders.aggregate(pipeline).to_list(length=None)
+
+    # Convert to frontend-friendly format
+    return [
+        {
+            "year": r["_id"]["year"],
+            "month": r["_id"]["month"],
+            "count": r["count"]
+        }
+        for r in result
+    ]
+
+
+async def get_return_orders_by_month(store_id: str):
+    pipeline = [
+        {"$match": {"store_id": store_id}},
+        {"$addFields": {
+            "return_date_parsed": {
+                "$dateFromString": {
+                    "dateString": "$return_date",
+                    "format": "%Y-%m-%d"
+                }
+            }
+        }},
+        {"$group": {
+            "_id": {
+                "year": {"$year": "$return_date_parsed"},
+                "month": {"$month": "$return_date_parsed"}
+            },
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"_id.year": 1, "_id.month": 1}}
+    ]
+
+    result = await db.ReturnOrders.aggregate(pipeline).to_list(length=None)
+
+    return [
+        {"year": r["_id"]["year"], "month": r["_id"]["month"], "count": r["count"]}
+        for r in result
+    ]

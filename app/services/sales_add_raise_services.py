@@ -129,21 +129,55 @@ async def add_return(data: ReturnOrderRequest, store_id: str):
     products_list = order.get("products", [])
     if not products_list:
         raise HTTPException(status_code=404, detail="Product array is missing or empty in Sales Order")
-    print(products_list)
-    # Enrich products using provided return_quantity and reason
-    enriched_products, total_amount = await enrich_products(products_list, data.return_quantity, data.reason)
+
+    enriched_products, total_amount, skipped_products = await enrich_products(
+        products_list, data.return_quantity, data.reason
+    )
     
     if not enriched_products:
-        raise HTTPException(status_code=404, detail="No valid product data eligible for return")
+        raise HTTPException(
+            status_code=404,
+            detail=f"No valid product data eligible for return. Skipped products: {skipped_products}"
+        )
 
     return_id = await generate_return_id()
 
     return_doc = build_return_doc(data, order, enriched_products, total_amount, return_id, store_id)
-    print(return_doc)
     await db.ReturnOrders.insert_one(return_doc)
+
+    # Check return_quantity against order_quantity
+    updated_products = []
+    should_delete = True  # Assume deletion unless a product still has quantity left
+
+    for product in products_list:
+        order_qty = int(product.get("order_quantity", 0))
+        if order_qty <= 0:
+            continue
+        
+        if data.return_quantity >= order_qty:
+            # The product is fully returned, so skip adding it to updated_products
+            continue
+        else:
+            # Partial return, update the order_quantity
+            product["order_quantity"] = order_qty - data.return_quantity
+            updated_products.append(product)
+            should_delete = False  # Since at least one product still has remaining quantity
+
+    if should_delete:
+        # Delete the entire order
+        await db.SalesOrders.delete_one({"order_id": data.order_id, "store_id": store_id})
+    else:
+        # Update the order with the new product quantities
+        await db.SalesOrders.update_one(
+            {"order_id": data.order_id, "store_id": store_id},
+            {"$set": {"products": updated_products}}
+        )
 
     return {
         "message": "Return order added successfully",
         "return_id": return_id,
-        "returned_amount": return_doc["returned_amount"]
+        "returned_amount": return_doc["returned_amount"],
+        "enriched_products": enriched_products,
+        "skipped_products": skipped_products
     }
+

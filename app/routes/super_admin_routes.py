@@ -9,6 +9,7 @@ from app.models.super_admin_models import (
     StoreInvitationModel, HelpModel
 )
 from app.services import super_admin_service as svc
+from app.services.super_admin_dashboard import get_dashboard_overview
 
 router = APIRouter()
 
@@ -82,9 +83,26 @@ async def change_password(request: Request, pw: ChangePasswordModel):
     return res
 
 # ── DASHBOARD ─────────────────────────────
+
 @router.get("/overview")
-async def overview(request: Request):
-    return await svc.get_dashboard_overview(request.state.user)
+async def dashboard_overview(request: Request):
+    """
+    Get dashboard overview with:
+    - Total admins count
+    - Total stores count (all statuses)
+    - Total categories count
+    - Total subcategories count
+    - Store growth chart by creation date
+    - Active/Inactive store ratio
+    - Category/Subcategory ratio
+    """
+    try:
+        # Call the service function to get the overview data
+        overview_data = await get_dashboard_overview(request)
+        return overview_data
+    except Exception as e:
+        print(f"[DASHBOARD ERROR] {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate dashboard data: {str(e)}")
 
 # ── STORE CRUD ────────────────────────────
 @router.get("/stores")

@@ -106,27 +106,29 @@ class ReturnOrderRequest(BaseModel):
 class ReturnedProductModel(BaseModel):
     product_id: str
     product_name: str
-    quantity: int
+    return_quantity: int
     unit_price: Optional[float] = None
-    tax: Optional[float] = None  # present in DB
+    tax: Optional[float] = None
+    is_customer_returnable: Optional[bool] = None
+    consumer_return_conditions: Optional[List[str]] = []
+    is_seller_returnable: Optional[bool] = None
+    seller_return_conditions: Optional[List[str]] = []
 
 class ReturnedOrderModel(BaseModel):
-    store_id: str
-    organisation_id: Optional[str] = None
     return_id: str
     order_id: str
     customer_id: str
     customer_name: str
     phone_no: str
     email: str
-    return_to: Optional[str] = None
     product: List[ReturnedProductModel]
     return_date: datetime
     reason: str
     is_customer_returnable: Optional[bool] = None
-    returned_amount: Optional[float] = None
     remarks: Optional[str] = None
+    returned_amount: Optional[float] = None
     sent_to_procurement: Optional[int] = None
+    store_id: str
 
 class ProductDetails(BaseModel):
     product_id: str
