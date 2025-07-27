@@ -60,6 +60,17 @@ class SignupModel(BaseModel):
     joining_date: Optional[str] = None
     termination_date: Optional[str] = None
     status: Optional[int] = None
+    id: Optional[str] = None
+    email: EmailStr                       
+    password: str         
+    #to be removed optional from store and org id                                           
+    org_id: Optional[str] = None  # default org_id for super admin
+    store_id: Optional[str] = None  # default store_id for super admin
+    role: Optional[str] = None
+    name: Optional[NameModel] = None
+    joining_date: Optional[str] = None
+    termination_date: Optional[str] = None
+    status: Optional[int] = None
 
 
 class LoginModel(BaseModel):
@@ -80,6 +91,8 @@ class ChangePasswordModel(BaseModel):
 
 
 
+
+
 # ──────────────────────────────────────────
 #  C.  STORE  (Stores collection)
 # ──────────────────────────────────────────
@@ -89,8 +102,16 @@ class CategoryModel(BaseModel):
     name: str
 
 
+
+class CategoryModel(BaseModel):
+    id: str
+    name: str
+
+
 class CreateStoreModel(BaseModel):
     # full Stores schema; * required by UI
+    org_id: Optional[str]= None            # filled by service
+    store_id: Optional[str] = None                         # *
     org_id: Optional[str]= None            # filled by service
     store_id: Optional[str] = None                         # *
     store_name: str                       # *new
@@ -108,13 +129,35 @@ class CreateStoreModel(BaseModel):
     admin_name: NameModel
     departments: Optional[List[DeptStaffModel]] = []   # optional per collection# subcategory IDs for scalability
     category_ids: Optional[List[CategoryModel]] = []
+    category_ids: Optional[List[CategoryModel]] = []
     subcategory_ids: Optional[List[str]] = []
  
 # class Department(BaseModel):
 #     department: str
 #     employee_id: str
+# class Department(BaseModel):
+#     department: str
+#     employee_id: str
 
 class StoreUpdate(BaseModel):
+    org_id: Optional[str] = None
+    store_id: Optional[str] = None
+    store_name: Optional[str] = None
+    gst_number: Optional[str] = None
+    buisness_type: Optional[str] = None
+    social_media: Optional[str] = None
+    website: Optional[str] = None
+    address: Optional[AddressModel] = None
+    admin_id: Optional[str] = None
+    store_email: Optional[str] = None
+    password: Optional[str] = None
+    status: Optional[int] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    admin_name: Optional[NameModel] = None
+    departments: Optional[List[DeptStaffModel]] = None
+    category_ids: Optional[List[CategoryModel]]= None
+    subcategory_ids: Optional[List] = None
     org_id: Optional[str] = None
     store_id: Optional[str] = None
     store_name: Optional[str] = None
@@ -147,6 +190,9 @@ class EditStoreModel(CreateStoreModel):
 class StoreIdsModel(BaseModel):
     store_ids: List[str]
 
+class StoreIdsModel(BaseModel):
+    store_ids: List[str]
+
 
 class UpdateStoreStatusModel(BaseModel):
     status: Literal[0, 1, 2]  # 0=draft 1=active 2=disabled
@@ -160,6 +206,7 @@ class UserModel(BaseModel):
     phone: str
     bio : Optional[str] = None
     profile_image: Optional[str] = None
+    role: str = "admin"
     role: str = "admin"
     name: NameModel
     joining_date: datetime  

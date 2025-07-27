@@ -40,7 +40,7 @@ async def login(email: str, password: str):
 
     token = create_access_token({
         "email": email,
-        "id": str(admin["_id"]),
+        "id":admin["id"],
         "role": role,
         "store_id": admin.get("store_id", ""),
         "org_id": admin.get("org_id", "")

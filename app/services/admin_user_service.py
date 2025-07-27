@@ -5,7 +5,7 @@ import bcrypt
 from pymongo import DESCENDING
 
 from app.db import db
-from app.services.admin_setup_service import hash_password
+# from app.services.admin_setup_service import hash_password
 # from app.utils.email_forgot import send_reset_email
 
 async def create_department_user(data, user_info):

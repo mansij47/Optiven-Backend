@@ -10,12 +10,13 @@ async def get_store_detail_by_token(request: Request):
     if not store_id:
         raise HTTPException(status_code=400, detail="Missing store_id in token")
 
-    store = await db.Stores.find_one({"store_id": store_id})
+    store = await db.Stores.find_one({"store_id": store_id}, {"_id": 0})
     if not store:
         raise HTTPException(status_code=404, detail="Store not found")
 
-    store["_id"] = str(store["_id"])
+    store["store_id"] = store.get("store_id")  
     return store
+
 async def update_store_by_token(updates: dict, request: Request):
     store_id = request.state.user.get("store_id")
     if not store_id:

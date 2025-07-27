@@ -271,10 +271,13 @@ async def get_procurement_return_detail(return_id: str, request: Request):
     user = request.state.user
     if user.get("role") != "sales":
         raise HTTPException(status_code=403, detail="Only sales users are allowed.")
+
     storeId = user.get("store_id")
-    result = await get_procurement_return_by_id(return_id , storeId )
+
+    result = await get_procurement_return_by_id(return_id, storeId)
     if not result:
         raise HTTPException(status_code=404, detail="Return order not found")
+
     return result
 
 @router.get("/products/details", response_model=ProductDetails)
@@ -324,3 +327,31 @@ async def get_sales_summary(request: Request):
 
     return summary
     
+@router.get("/dashboard/sold-orders-by-month")
+async def sold_orders_by_month(request: Request):
+    user = request.state.user
+
+    if not user or user.get("role") != "sales":
+        raise HTTPException(status_code=403, detail="Forbidden: Sales access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    data = await sales_get_update_services.get_sold_orders_by_month(store_id)
+    return data
+
+
+@router.get("/dashboard/return-orders-by-month")
+async def return_orders_by_month(request: Request):
+    user = request.state.user
+
+    if not user or user.get("role") != "sales":
+        raise HTTPException(status_code=403, detail="Forbidden: Sales access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    data = await sales_get_update_services.get_return_orders_by_month(store_id)
+    return data

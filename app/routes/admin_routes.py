@@ -3,13 +3,14 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 # from app.models.super_admin_models import HTTPException, Request, Query, Body
 from app.models.admin_login_model import LoginModel
 from app.services import admin_login_service as svc
-from typing import Optional
-from app import db;
+from typing import Optional,List
+from app import db
 import traceback
 from jose import jwt, JWTError
 from bson import ObjectId
 import os
 from app.models.admin_model import DepartmentUserCreate, EditOrderModel, LoginModel, NewRaiseOrderRequest, Product, RaiseRequestOrderModel, ResetPasswordRequest, SalesOrderModel ,ProductUpdate
+from app.services import notification_service
 from app.services.admin_inventory_service import delete_product_service, update_product_by_id, export_inventory_csv, get_product_by_id, get_all_products, add_product_service 
 from app.services.admin_lossOrders_service import export_loss_orders_csv, get_all_loss_orders_with_metrics 
 from app.services.admin_receivedOrders_service import delete_order_by_id, get_all_sales_orders, update_sales_order
@@ -20,16 +21,17 @@ from app.models.admin_model import EditOrderModel
 
 # Importing the notification model and service
 from app.models.notification_model import NotificationUpdate, NotificationBase
-from app.services.notification_service import create_notifications_service
 from app.services.notification_service import (
+    create_notification,   
     get_all_notifications,
     update_notification_by_id,
     delete_notification_by_id
 )
 
 # Importing the admin setup model and service
-from app.models.admin_setup_model import AdminSetupRequest
-from app.services.admin_setup_service import update_admin_setup
+from app.models.admin_setting_model import AdminSetupSettingRequest
+from app.services.admin_setting_service import update_admin_setting, get_admin_setting
+
 # Importing the category model and service
 from app.models.category_model import CategoryCreate, CategoryUpdate
 from app.services.category_service import (
@@ -46,7 +48,8 @@ from app.services.help_service import create_help_request, get_all_help_requests
 from app.services.store_service import get_store_detail_by_token
 from app.models.store_model import StoreUpdate, StaffInput
 from app.services.store_service import update_store_by_token, add_staff_to_department, update_staff_in_department, delete_staff_from_department
-
+from app.services.dashboard_service import get_dashboard_data
+from app.models.dashboard_model import DashboardResponse
 router = APIRouter()
 
 # ================== ROOT ==================
@@ -54,31 +57,67 @@ router = APIRouter()
 def root():
     return {"message": "Welcome to Optiven Admin APIs"}
 
-# ================== LOGIN ==================
-# @router.post("/auth/login")   #super admin login
-# async def login(login_data: LoginModel):
-#     res = await svc.login(login_data.email, login_data.password)
-#     if res is None:
-#         raise HTTPException(401, "Invalid email or password")
-#     return res
+# ================== Dashboard ==================
+@router.get("/dashboard")
+async def fetch_dashboard_data(request: Request):
+    # You can now access role like this:
+    user = request.state.user
+    role = user.get("role")
+
+    # Optional role check (if needed)
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    data = await get_dashboard_data()
+    return data
+
 
 # ================== NOTIFICATIONS ==================
 #create the notification by the sales , procurement department to sent the notification to the admin
+# @router.post("/send/notification")
+# async def send_notification(
+#     model: NotificationBase,
+#     admin: Optional[bool] = Query(False),
+#     sales: Optional[bool] = Query(False),
+#     procurement: Optional[bool] = Query(False)
+# ):
+#     return await notification_service.create_notification(
+#         model,
+#         admin=admin,
+#         sales=sales,
+#         procurement=procurement
+#     )
 @router.post("/notification")
-async def create_notification_api(
-    request: Request,
-    notification: NotificationBase = Body(...)
+async def send_notification(
+    request: Request,  # ✅ Move request to the top
+    model: NotificationBase,
+    admin: Optional[bool] = Query(False),
+    sales: Optional[bool] = Query(False),
+    procurement: Optional[bool] = Query(False)
 ):
-    return await create_notifications_service(notification)
+    user = request.state.user
+    sender = {
+        "id": user.get("id"),
+        "role": user.get("role"),
+        "store_id": user.get("store_id"),
+        "email": user.get("email")
+    }
+
+    return await notification_service.create_notification(
+        model,
+        admin=admin,
+        sales=sales,
+        procurement=procurement
+       
+    )
+
+
 
 @router.get("/notifications")
 async def get_notifications(request: Request, status: Optional[int] = None):
-    user = request.state.user
+    user = request.state.user  # Token-decoded user info: id, role, etc.
     try:
-        if status is not None:
-            return await get_all_notifications(status)
-        else:
-            return await get_all_notifications()
+        return await get_all_notifications(user, status)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
@@ -103,10 +142,23 @@ async def delete_notification(request: Request, notification_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-# ================== ADMIN SETUP ================
+# ================== ADMIN SETUP_SETTING ================
 
-@router.patch("/setup")
-async def admin_first_time_setup(request: Request, setup_data: AdminSetupRequest):
+# NEW: Get admin setup_setting details for the current admin
+@router.get("/setting")
+async def get_admin_setup_setting_details(request: Request):
+    admin_id = request.state.user.get("id")
+    if not admin_id:
+        raise HTTPException(status_code=401, detail="Admin ID not found in token")
+    details = await get_admin_setting(admin_id)
+    if not details:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    return details  # details is already {"admin": ...}
+
+
+# Update 
+@router.patch("/setting")
+async def admin_first_time_setup_setting(request: Request, setup_data: AdminSetupSettingRequest):
     try:
         admin_id = request.state.user.get("id")
         if not admin_id:
@@ -121,7 +173,7 @@ async def admin_first_time_setup(request: Request, setup_data: AdminSetupRequest
         raise HTTPException(status_code=400, detail="No fields to update")
 
     # Step 3: Update admin by _id (MongoDB _id)
-    updated_admin = await update_admin_setup(admin_id, update_fields)
+    updated_admin = await update_admin_setting(admin_id, update_fields)
 
     if not updated_admin:
         raise HTTPException(status_code=404, detail="Admin not found or update failed")
@@ -178,41 +230,6 @@ async def update_store(
     updates: StoreUpdate = Body(...)
 ):
     return await update_store_by_token(updates.model_dump(exclude_none=True), request)
-# @router.post("/store/department/{department}/staff")
-# async def add_staff(
-#     department: str,
-#     request: Request,
-#     staff: StaffInput = Body(...)
-# ):
-#     return await add_staff_to_department(department, staff, request)
-
-# @router.patch("/store/department/{department}/staff/{staff_id}")
-# async def update_staff(
-#     department: str,
-#     staff_id: str,
-#     request: Request,
-#     staff: StaffInput = Body(...)
-# ):
-#     return await update_staff_in_department(department, staff_id, staff, request)
-
-# @router.delete("/store/department/{department}/staff/{staff_id}")
-# async def delete_staff(
-#     department: str,
-#     staff_id: str,
-#     request: Request
-# ):
-#     return await delete_staff_from_department(department, staff_id, request)
-
-#vanshika code #
-# @router.post("/auth/login")   #super admin login
-# async def login_router(login_data: LoginModel):
-#     # print(login_data)
-#     # breakpoint()n
-#     res = await login(login_data.email, login_data.password)
-#     if res is None:
-#         raise HTTPException(401, "Invalid email or password")
-#     return res
-
 
 @router.post("/add/product")
 async def add_product(request: Request, product: Product):

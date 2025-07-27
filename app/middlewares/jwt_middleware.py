@@ -10,8 +10,8 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
         # Define routes to bypass the middleware
-        bypass_routes = ["/", "/docs", "/openapi.json", "/redoc"]
- 
+        bypass_routes = ["/","/docs", "/openapi.json", "/redoc"]
+    
         # Bypass routes if the path matches an exact route or contains "system"
         if request.url.path in bypass_routes or "/register" in request.url.path or "/login" in request.url.path:
             return await call_next(request)

@@ -127,8 +127,9 @@ async def generate_return_id():
     
 # --- Helper function to enrich products and calculate total returned amount ---
 async def enrich_products(products: list, return_quantity: int, reason: str):
-    print(products)
+    print("Incoming products:", products)
     enriched_products = []
+    skipped_products = []  # Track products that are skipped
     total_amount = 0.0
 
     for product in products:
@@ -138,19 +139,38 @@ async def enrich_products(products: list, return_quantity: int, reason: str):
         tax = product.get("tax", 0.0)
 
         if not product_id or not product_name:
+            skipped_products.append({
+                "product_id": product_id,
+                "reason": "Missing product_id or product_name"
+            })
             continue
 
         # Fetch additional inventory info
         inventory = await db.Inventory.find_one({"product_id": product_id}, {"_id": 0})
         if not inventory:
+            skipped_products.append({
+                "product_id": product_id,
+                "reason": "Product not found in Inventory"
+            })
             continue
 
-        print(inventory.get("consumer_return_conditions", []))
         is_customer_returnable = inventory.get("is_consumer_returnable", False)
         consumer_conditions = inventory.get("consumer_return_conditions", [])
-        print(consumer_conditions)        
+
+        print(f"Checking {product_id}: is_customer_returnable={is_customer_returnable}, conditions={consumer_conditions}, reason={reason}")
+
         # Validate return eligibility
-        if not is_customer_returnable or reason not in consumer_conditions:
+        if not is_customer_returnable:
+            skipped_products.append({
+                "product_id": product_id,
+                "reason": "Product is not marked as consumer returnable"
+            })
+            continue
+        if reason not in consumer_conditions:
+            skipped_products.append({
+                "product_id": product_id,
+                "reason": f"Reason '{reason}' not in consumer_return_conditions: {consumer_conditions}"
+            })
             continue
 
         try:
@@ -158,6 +178,10 @@ async def enrich_products(products: list, return_quantity: int, reason: str):
             unit_price = float(unit_price)
             tax = float(tax)
         except (ValueError, TypeError):
+            skipped_products.append({
+                "product_id": product_id,
+                "reason": "Invalid return_quantity, unit_price or tax format"
+            })
             continue
 
         item_amount = (unit_price * return_quantity) - (tax * return_quantity)
@@ -174,8 +198,10 @@ async def enrich_products(products: list, return_quantity: int, reason: str):
             "is_seller_returnable": inventory.get("is_seller_returnable", False),
             "seller_return_conditions": inventory.get("seller_return_conditions", [])
         })
-        print(enriched_products)
 
-    return enriched_products, total_amount
+    print("Enriched Products:", enriched_products)
+    print("Skipped Products:", skipped_products)
+
+    return enriched_products, total_amount, skipped_products
 
 
