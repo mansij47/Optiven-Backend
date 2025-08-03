@@ -264,15 +264,11 @@ async def get_all_procurement_returns(store_id: str):
         result.append(r)  # Append the entire document as it is
     return result
 
-async def get_procurement_return_by_id(return_id: str, store_id: str):
+async def get_procurement_return_by_id(return_id: str , store_id: str):
     return await db.ReturnOrders.find_one(
-        {
-            "return_id": return_id,
-            "store_id": store_id,
-            "sent_to_procurement": 1  # Only fetch if sent_to_procurement is 1
-        },
-        {"_id": 0}
-    )
+    {"return_id": return_id, "store_id": store_id},
+    {"_id": 0}
+)
 
 
 async def get_product_details_service(store_id: str, product_id: Optional[str] = None, product_name: Optional[str] = None) -> ProductDetails:
@@ -301,7 +297,11 @@ async def get_product_details_service(store_id: str, product_id: Optional[str] =
 
 async def get_sales_order_by_id(order_id: str, store_id: str):
     order = await db.SalesOrders.find_one(
-        {"order_id": order_id, "order_status": "0", "store_id": store_id},
+         {
+            "order_id": order_id,
+            "store_id": store_id,
+            "order_status": {"$in": ["0", "1"]},  # Allow both statuses
+        },
         {"_id": 0}
     )
 
@@ -365,80 +365,8 @@ async def get_sales_dashboard_summary(store_id: str):
         {"_id": 0, "total_order_price": 1}
     ).to_list(length=None)
 
-    total_received = len(received_orders)
-    total_sold = len(sold_orders)
-    total_orders = total_received + total_sold
-
-    # Calculate total price sum of sold orders
-    sold_price_sum = 0.0
-    for order in sold_orders:
-        try:
-            sold_price_sum += float(order.get("total_order_price", 0))
-        except (ValueError, TypeError):
-            continue
-
-    return {
-        "total_orders": total_orders,
-        "received_orders": total_received,
-        "sold_orders": total_sold,
-        "sold_order_total_price": round(sold_price_sum, 2)
-    }
-async def get_sales_order_by_id(order_id: str, store_id: str):
-    order = await db.SalesOrders.find_one(
-         {
-            "order_id": order_id,
-            "store_id": store_id,
-            "order_status": {"$in": ["0", "1"]},  # Allow both statuses
-        },
-        {"_id": 0}
-    )
-
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found or already processed.")
-
-    updated_products = []
-
-    for product in order.get("products", []):
-        product_id = product.get("product_id")
-        ordered_quantity = int(product.get("order_quantity", 0))
-
-        inventory_item = await db.Inventory.find_one({
-            "store_id": store_id,
-            "product_id": product_id
-        })
-
-        try:
-            inventory_quantity = int(inventory_item.get("quantity", 0)) if inventory_item else 0
-        except (ValueError, TypeError):
-            inventory_quantity = 0
-
-        # Determine product status
-        product_status = "Stock-out" if inventory_quantity < ordered_quantity else "Stock-in"
-        product["product_status"] = product_status
-        updated_products.append(product)
-
-    # Final transformation
-    order["products"] = updated_products
-    order["status"] = parse_status_string(order.get("status", "0"))
-
-    if "order_status" in order:
-        del order["order_status"]
-
-    return order
-
-async def get_sales_dashboard_summary(store_id: str):
-    # Get received orders
-    received_orders = await db.SalesOrders.find(
-        {"store_id": store_id, "order_status": "0"},
-        {"_id": 0, "total_order_price": 1}
-    ).to_list(length=None)
-
-    # Get sold orders
-    sold_orders = await db.SalesOrders.find(
-        {"store_id": store_id, "order_status": "1"},
-        {"_id": 0, "total_order_price": 1}
-    ).to_list(length=None)
-
+    # Get return orders count from ReturnOrders collection
+    return_orders_count = await db.ReturnOrders.count_documents({"store_id": store_id})
     total_received = len(received_orders)
     total_sold = len(sold_orders)
     total_orders = total_received + total_sold

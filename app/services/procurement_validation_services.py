@@ -32,6 +32,22 @@ async def validate_purchase_order(data, store_id: str, org_id: str):
         }
         await inventory_collection.insert_one(inventory_data)
 
+
+
+    elif data.is_product_damaged and not data.returnable:
+        loss_data = {
+            "product_id": data.product_id or f"P{ObjectId()}"[:6],
+            "org_id": org_id,
+            "store_id": store_id,
+            "product_name": data.product_name,
+            "category": data.category,
+            "date_reported": datetime.utcnow().strftime("%Y-%m-%d"),
+            "quantity_lost": data.expected_quantity - data.received_quantity,
+            "unit": data.quantity_unit,
+            "unit_price": str(data.unit_price),
+            "reason": "Damaged and not returnable",
+        }
+        await loss_orders_collection.insert_one(loss_data)
     # Return to Vendor
     elif (data.received_quantity != data.expected_quantity) or (data.is_product_damaged and data.returnable):
         return_data = {
@@ -39,7 +55,7 @@ async def validate_purchase_order(data, store_id: str, org_id: str):
             "org_id": org_id,
             "return_id": f"RV{ObjectId()}"[:6],
             "order_id": data.order_id,
-            "vendor_name": data.supplier_name,
+            "vendor_name": data.vendor_name,
             "product_name": data.product_name,
             "delivery_date": data.delivery_date,
             "status": "0",
@@ -57,20 +73,7 @@ async def validate_purchase_order(data, store_id: str, org_id: str):
         await return_to_vendor_collection.insert_one(return_data)
 
     # Loss Orders
-    elif data.is_product_damaged and not data.returnable:
-        loss_data = {
-            "product_id": data.product_id or f"P{ObjectId()}"[:6],
-            "org_id": org_id,
-            "store_id": store_id,
-            "product_name": data.product_name,
-            "category": data.category,
-            "date_reported": datetime.utcnow().strftime("%Y-%m-%d"),
-            "quantity_lost": data.expected_quantity - data.received_quantity,
-            "unit": data.quantity_unit,
-            "unit_price": str(data.unit_price),
-            "reason": "Damaged and not returnable",
-        }
-        await loss_orders_collection.insert_one(loss_data)
+
 
     # Update validation status in purchase order
     await purchase_orders_collection.update_one(

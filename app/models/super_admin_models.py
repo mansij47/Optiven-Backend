@@ -14,13 +14,13 @@ class AddressModel(BaseModel):
     phone: Optional[str] = None
 
 class DeptStaffModel(BaseModel):
-    joining_date: str
+    joining_date: Optional[str] = None
     termination_date: Optional[str] = None
-    staff_id: str
-    name: str
-    email: EmailStr
-    password: str
-    status: int
+    staff_id: Optional[str] = None
+    name: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = None
+    status: Optional[str] = None
 
 class SubCategoryEmbedded(BaseModel):
     sub_category_id: str

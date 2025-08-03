@@ -121,6 +121,7 @@ class DepartmentUserCreate(BaseModel):
     first_name: str
     last_name: str
     email: EmailStr
+    phone: Optional[str] = None
     password: str
     role: str  # 'sales' or 'procurement'
     # org_id: str
