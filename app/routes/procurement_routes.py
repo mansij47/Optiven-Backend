@@ -36,6 +36,9 @@ from app.models.procurement_models import Product
 from app.models.procurement_models import AdminSetupRequest
 from app.services import procurement_setup_services
 
+from app.services.procurement_dashboard_service import get_procurement_dashboard_data
+from app.models.procurement_models import ProcurementDashboardResponse
+
 router = APIRouter()
 
 @router.get("/")
@@ -340,3 +343,16 @@ async def admin_first_time_setup(request: Request, setup_data: AdminSetupRequest
         raise HTTPException(status_code=404, detail="Admin not found or update failed")
 
     return updated_admin
+
+
+#Dashboard
+@router.get("/dashboard")
+async def procurement_dashboard(request: Request):
+    user = request.state.user
+
+    if user.get("role") != "procurement":
+        raise HTTPException(status_code=403, detail="Only procurement users allowed.")
+    
+    store_id = user.get("store_id")
+    return await get_procurement_dashboard_data(store_id)
+

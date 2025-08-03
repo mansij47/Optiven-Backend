@@ -234,7 +234,7 @@ async def update_store(
 @router.post("/add/product")
 async def add_product(request: Request, product: Product):
     user = request.state.user  # Decoded JWT stored by middleware
-    if user.get("role") != "admin":
+    if user.get("role") not in ["admin","procurement"]:
         raise HTTPException(status_code=403, detail="Forbidden: Admin access required.")
 
     store_id = user.get("store_id")
@@ -250,8 +250,8 @@ async def add_product(request: Request, product: Product):
 async def fetch_all_products_route(request: Request):
     # Role check
     user = request.state.user
-    if not user or user.get("role") not in ["admin", "procurement"]:
-        raise HTTPException(status_code=403, detail="Forbidden: Admin or Procurement access required.")
+    if not user or user.get("role") not in ["admin","procurement"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required.")
     
     store_id = user.get("store_id")
     if not store_id:
@@ -266,7 +266,7 @@ async def fetch_product_by_id(request: Request, product_id: str):
     # Admin role check
     user = request.state.user
 
-    if not user or user.get("role") not in ["admin", "procurement"]:
+    if user.get("role") not in ["admin","procurement"]:
         raise HTTPException(status_code=403, detail="Forbidden: Admin access required.")
 
     store_id = user.get("store_id")
@@ -278,7 +278,7 @@ async def fetch_product_by_id(request: Request, product_id: str):
 async def edit_product_patch(request: Request, product_id: str, data: ProductUpdate):
     # Admin role check
     user = request.state.user
-    if user.get("role") != "admin":
+    if user.get("role") not in ["admin","procurement"]:
         raise HTTPException(status_code=403, detail="Forbidden: Admin access required.")
 
     # ✅ These lines must be indented inside the function
@@ -307,7 +307,7 @@ async def edit_product_put(request: Request, product_id: str, data: Product):
 @router.delete("/delete/product/{product_id}")
 async def delete_product(request: Request, product_id: str):
     user = request.state.user
-    if user.get("role") != "admin":
+    if user.get("role") not in ["admin","procurement"]:
         raise HTTPException(status_code=403, detail="Forbidden: Admin access required.")
     
     await delete_product_service(product_id)
@@ -400,9 +400,9 @@ async def add_employee(data: DepartmentUserCreate, request: Request):
     return await create_department_user(data, user)
 
 
-@router.delete("/delete/{user_id}")
-async def delete_user(user_id: str, request: Request):
-    return await delete_user_by_id(user_id, request)
+@router.delete("/delete/{employee_id}")
+async def delete_user(employee_id: str, request: Request):
+    return await delete_user_by_id(employee_id, request)
 
 
 # this is from sales
@@ -539,6 +539,7 @@ async def edit_order(order_id: str, order: EditOrderModel, request: Request):
 @router.post("/reset-password")
 async def reset_password_route(payload: ResetPasswordRequest):
     return await reset_password(payload.email, payload.user_id, payload.new_password)
+
 # sold orders
 @router.get("/orders/sold") 
 async def get_sold_orders(request: Request):

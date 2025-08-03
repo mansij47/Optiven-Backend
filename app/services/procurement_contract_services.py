@@ -83,10 +83,11 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
             purchase_order = {
                 "order_id": f"PO{contract_id[-4:]}",
                 "contract_id": contract_id,
-                "supplier_name": contract["vendor_name"],
+                "vendor_name": contract["vendor_name"],
                 "delivery_date": contract["date_of_delivery"],
                 "validation_status": "Pending",
-                "amount": str(contract["quantity"] * contract["unit_price"]),
+                "product_name": contract.get("product_name"),
+                "amount": float(float(contract["quantity"]) * float(contract["unit_price"])),
                 "store_id": store_id,
                 "org_id": contract.get("org_id", "ORG001"),
                 "received_quantity": contract.get("quantity", 0),
@@ -96,7 +97,11 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
                 "returnable": contract.get("is_seller_returnable", True),
                 "return_conditions": contract.get("seller_return_conditions", []),
                 "is_consumer_returnable": contract.get("is_consumer_returnable", True),
-                "consumer_return_conditions": contract.get("consumer_return_conditions", [])
+                "consumer_return_conditions": contract.get("consumer_return_conditions", []),
+                "unit": contract.get("unit", "pcs"),
+                "category": contract.get("category", "misc"),
+                "sub_category": contract.get("sub_category", "misc"),
+
             }
             await purchase_orders_collection.insert_one(purchase_order)
 

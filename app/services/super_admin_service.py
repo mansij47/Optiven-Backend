@@ -270,13 +270,6 @@ async def get_store_by_id(store_id: str):
 
     return store
 
-# async def edit_store(store_id: str, data: StoreUpdate) -> int:
-#     res = await db.Stores.update_one(
-#         {"store_id": store_id},
-#         data.model_dump(exclude_none=True) | {"updated_at": datetime.utcnow().isoformat()}
-#         # {"$set": data.model_dump(exclude_none=True) | {"updated_at": datetime.utcnow().isoformat()}}
-#     )
-#     return res.modified_count
 
 async def edit_store(store_id: str, data: StoreUpdate) -> int:
     update_data = data.model_dump(exclude_none=True)

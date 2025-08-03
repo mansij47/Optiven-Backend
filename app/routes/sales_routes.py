@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request, Query
 from app.models.sales_model import EditOrderModel, ProductDetails, ReturnOrderRequest, ReturnedOrderModel, SalesOrderDetails, SalesOrderModel, LoginModel, RequestOrderModel, SendToProcurement
 from app.services import sales_get_update_services
-from typing import Any, List, Optional
+from typing import Any, Optional
 from app.services import sales_add_raise_services
 from app.services.sales_add_raise_services import raise_request_order_service
 from app.services.sales_get_update_services import get_all_procurement_returns,get_procurement_return_by_id, get_product_details_service, get_sales_order_by_id
@@ -13,8 +13,8 @@ router = APIRouter()
 async def get_orders(request: Request):
     user = request.state.user
 
-    if not user or user.get("role") != "sales":
-        raise HTTPException(status_code=403, detail="Forbidden: Sales access required.")
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
     
     store_id = user.get("store_id")
     if not store_id:
@@ -41,8 +41,8 @@ async def get_sold_orders(request: Request):
 async def add_order(order: SalesOrderModel, request: Request):
     user = request.state.user
 
-    if not user or user.get("role") not in ["sales"]:
-        raise HTTPException(status_code=403, detail="Forbidden: Sales access required.")
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
 
     store_id = user.get("store_id")
     if not store_id:
@@ -69,8 +69,8 @@ async def login(login_data: LoginModel):
 async def edit_order(order_id: str, order: EditOrderModel, request: Request):
     user = request.state.user
 
-    if not user or user.get("role") != "sales":
-        raise HTTPException(status_code=403, detail="Forbidden: Sales access required.")
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
 
     store_id = user.get("store_id")
     if not store_id:
@@ -163,8 +163,8 @@ async def fetch_all_products_route(request: Request):
 async def raise_request_order(request_model: RequestOrderModel, request: Request):
     user = request.state.user
 
-    if not user or user.get("role") != "sales":
-        raise HTTPException(status_code=403, detail="Forbidden: Admin access required.")
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
 
     org_id = user.get("org_id")
     store_id = user.get("store_id")
@@ -261,20 +261,21 @@ async def mark_as_sent_to_procurement(return_id: str, request: Request):
 @router.get("/procurement/returns") 
 async def get_procurement_returns(request: Request):
     user = request.state.user
-    if user.get("role") != "sales":
+    if user.get("role") not in ["sales","procurement"]:
         raise HTTPException(status_code=403, detail="Only sales users are allowed.")
-    storeId = user.get("store_id")
-    return await get_all_procurement_returns(storeId )
+    if user.get("role") in ["sales","procurement"]:
+        store_id = user.get("store_id")
+    return await get_all_procurement_returns(store_id)
+
 
 @router.get("/procurement/returns/{return_id}", response_model=ReturnedOrderModel)
 async def get_procurement_return_detail(return_id: str, request: Request):
     user = request.state.user
-    if user.get("role") != "sales":
+    if user.get("role") not in ["sales","procurement"]:
         raise HTTPException(status_code=403, detail="Only sales users are allowed.")
-
-    storeId = user.get("store_id")
-
-    result = await get_procurement_return_by_id(return_id, storeId)
+    if user.get("role") in ["sales","procurement"]:
+        storeId = user.get("store_id")
+    result = await get_procurement_return_by_id(return_id , storeId )
     if not result:
         raise HTTPException(status_code=404, detail="Return order not found")
 
@@ -284,8 +285,8 @@ async def get_procurement_return_detail(return_id: str, request: Request):
 async def get_product_details(request: Request, product_id: Optional[str] = None, product_name: Optional[str] = None):
     user = request.state.user
 
-    if not user or user.get("role") != "sales":
-        raise HTTPException(status_code=403, detail="Forbidden: Sales access required.")
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
 
     store_id = user.get("store_id")
     if not store_id:
@@ -302,8 +303,8 @@ async def get_order_by_id(order_id: str, request: Request):
     user = request.state.user
 
     # Role check
-    if not user or user.get("role") != "sales":
-        raise HTTPException(status_code=403, detail="Forbidden: Sales access required.")
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
 
     store_id = user.get("store_id")
     if not store_id:

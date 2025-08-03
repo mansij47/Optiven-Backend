@@ -26,7 +26,6 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             # Extract and verify the token
             token = token.split(" ")[1]
             payload = decode_token(token)
-            print(payload)
             request.state.user = payload  # Attach user data to request state
             
         except Exception:

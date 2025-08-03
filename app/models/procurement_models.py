@@ -35,25 +35,26 @@ class Contract(BaseModel):
     contract_id: Optional[str] = None
     request_id: str
     vendor_name: str
-    vendor_email: EmailStr
-    phone: str
-    address: str
-    pincode: str
-    business_type: str
-    unit_price: float
-    gst_number: str
-    tax: float
-    product_name: str
-    quantity: int
-    unit: str
-    category: str
-    sub_category: str
-    tags: List[str]
-    warranty_tenure: int
-    warranty_unit: str
-    date_of_delivery: str
-    returnable: bool
-    return_conditions: List[str]
+    vendor_email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    pincode: Optional[str] = None
+    business_type: Optional[str] = None
+    unit_price: Optional[float] = None
+    gst_number: Optional[str] = None
+    tax: Optional[float] = None
+    product_name: Optional[str] = None
+    quantity: Optional[int] = None
+    unit: Optional[str] = None
+    category: Optional[str] = None
+    sub_category: Optional[str] = None
+    tags: Optional[List[str]] = None
+    warranty_tenure: Optional[int] = None
+    warranty_unit: Optional[str] = None
+    date_of_delivery: Optional[str] = None
+    returnable: Optional[bool] = None
+    return_conditions: Optional[List[str]] = None
+    is_damage_returnable: Optional[bool] = None
     status: str
 
 #Update Contracts
@@ -79,6 +80,8 @@ class ContractUpdate(BaseModel):
     date_of_delivery: Optional[str]= None
     returnable: Optional[bool]= None
     return_conditions: Optional[List[str]]= None
+    is_damage_returnable: Optional[bool] = None
+
     status: Optional[str]= None
 
 
@@ -112,11 +115,11 @@ class ReturnToVendorModel(BaseModel):
 class ReturnToVendorResponse(BaseModel):
     return_id: str
     order_id: str
-    vendor_name: str
+    vendor_name: Optional[str] = ""
     product_name: str
-    delivery_date: str
+    delivery_date: Optional[str] = ""
     status: str
-    return_amount: str
+    return_amount: Optional[str] = "0"
 
 class ReturnToVendorDetail(BaseModel):
     contract_id: str
@@ -134,11 +137,15 @@ class ReturnToVendorDetail(BaseModel):
 class PurchaseOrderResponse(BaseModel):
     order_id: str
     contract_id: str
-    supplier:str  = None
+    vendor_name:str  = None
     delivery_date: str
     received_status: str
     validation_status: str
     amount: Optional[int] = None
+    product_name: Optional[str] = None
+    category: Optional[str] = None
+    unit: Optional[str] = None
+
 
 
 #Delivery Status
@@ -151,10 +158,10 @@ class PurchaseOrderValidationRequest(BaseModel):
     order_id: str
     contract_id: str
     delivery_date: str
-    supplier_name: str
+    vendor_name: str
     expected_quantity: int
     received_quantity: int
-    quantity_unit: str
+    unit: str
     is_product_damaged: bool
     returnable: bool
     return_conditions: Optional[List[str]] = []
@@ -253,3 +260,25 @@ class AdminSetupRequest(BaseModel):
     profile_image: Optional[str] = None
     bio: Optional[str] = None
     password: Optional[str] = None    
+
+
+
+#Dashboard
+class MonthlyStats(BaseModel):
+    month: str
+    orders: int
+    returns: int
+
+class SupplierContract(BaseModel):
+    name: str
+    value: str
+    status: str
+
+class ProcurementDashboardResponse(BaseModel):
+    total_purchase_orders: int
+    pending_validations: int
+    active_contracts: int
+    returns_initiated: int
+    monthly_data: List[MonthlyStats]
+    supplier_contracts: List[SupplierContract]
+    
