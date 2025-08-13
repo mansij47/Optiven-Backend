@@ -56,7 +56,6 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
         "requested_by": requester
     }
 
-
 async def raise_request_order_service(order_id: str, estimate_date: str, org_id: str, store_id: str, requester: dict):
     request_data = await prepare_request_data(order_id, store_id, estimate_date, org_id, requester)
     request_id = await generate_request_id()
@@ -65,11 +64,7 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
     await db.RequestedOrders.insert_one(request_data)
     return request_id
 
-
-
-
 #admin wala - directly requesting for new product
-
 
 async def generate_request_id():
     latest = await db.RequestedOrders.find_one({}, sort=[("request_id", -1)])
@@ -93,32 +88,5 @@ async def raise_order_request_service(data: dict, org_id: str, store_id: str, re
         "estimate_date": data.get("estimate_date", datetime.utcnow().strftime("%Y-%m-%d")),
         "requested_by": requested_by
     }
-
     await db.RequestedOrders.insert_one(request_doc)
-    
-    # import app.services.notification_service as notification_service
-    
-    # notification = {
-    #     "sender": {
-    #         "id": requested_by.get("id"),
-    #         "name": requested_by.get("name")
-    #     },
-    #     "receiver": [
-    #         {
-    #             "id": user.get("id"),
-    #             "name": user.get("name")
-    #         }
-    #         for user in await db.Users.find({"role": "admin"}).to_list()
-    #     ],
-    #     "type_of_notification": "order_request",
-    #     "title": f"New Order Request: {data['product_name']}",
-    #     "message": f"An order request has been raised for {data['quantity']} {data.get('unit', 'pcs')} of {data['product_name']}.",
-    #     "status": 0,
-    #     "time": datetime.utcnow().strftime("%H:%M:%S"),
-    #     "date": datetime.utcnow().strftime("%Y-%m-%d")
-    # }
-    
-
-    # notification_service.create_notifications_service(notification)
-
     return {"message": "Request raised successfully", "request_id": request_id}

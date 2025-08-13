@@ -90,25 +90,6 @@ async def get_product_by_id(product_id: str, store_id: str):
         raise HTTPException(status_code=500, detail=f"Error retrieving product: {str(e)}")
     
 
-# async def update_product_by_id(product_id: str, data: Product):
-#     try:
-#         update_data = {k: v for k, v in data.model_dump().items() if v is not None}
-
-#         if not update_data:
-#             raise HTTPException(status_code=400, detail="No update fields provided.")
-
-#         result = await db.Inventory.update_one(
-#             {"product_id": product_id},
-#             {"$set": update_data}
-#         )
-
-#         if result.matched_count == 0:
-#             raise HTTPException(status_code=404, detail="Product not found.")
-
-#         return {"message": "Product updated successfully."}
-
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Error updating product: {str(e)}")
 async def update_product_by_id(product_id: str, update_data: dict):
     
     product = await db["Inventory"].find_one({"product_id": product_id})

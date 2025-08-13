@@ -17,9 +17,6 @@ async def get_all_sold_orders(store_id: str):
         order.pop("order_status", None)
     return orders
 
-
-
-
 # adding new order of customer
 
 async def add_sales_order(order_data: dict, store_id: str):

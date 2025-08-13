@@ -20,12 +20,9 @@ from fastapi import HTTPException
 from app.db import db
 from app.utils.auth import create_access_token, verify_password
 
-
 def example_function() -> dict:
     """This function is an example.
-    
     It returns a dictionary with a message.
-    
     Returns:
         Dict: A dictionary with a message
     """
