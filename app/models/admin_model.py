@@ -2,9 +2,6 @@ from datetime import datetime
 from typing import List, Union
 from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
-# from app.models.sales_model import SalesOrderModel
-
-# admin_model.py
 
 class Product(BaseModel):
     org_id: Optional[str] = None
@@ -55,41 +52,33 @@ class LoginModel(BaseModel):
     email: EmailStr
     password: str  
 
+
+#Loss Orders
 class LossOrder(BaseModel):
-    product_id: str
-    org_id: str
-    store_id: str
     product_name: str
     category: str
     date_reported: str
     quantity_lost: int
     unit: str
     unit_price: float
-    reason: Optional[str]
+    reason: str
+
        
-
-class LossOrderList(BaseModel):
-    orders: List[LossOrder]
-
-class LossReportResponse(BaseModel):
-    current_loss_entries: List[dict]
-    total_loss_value: float
-    product_loss_count: int
-    most_affected_category: str
-    loss_percentage: float 
-    
-class RequestedOrder(BaseModel):
-    product_name: str
-    quantity: int
-    unit: str
-    store_id: str
-    org_id: str
-    status: Optional[str] = "pending"
-    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)       
 
 class OrderProductInput(BaseModel): # type: ignore
     product_id: str
     quantity: int
+from typing import List, Dict, Any
+from pydantic import BaseModel
+
+class ReportResponse(BaseModel):
+    total_loss: float
+    total_profit: float
+    chart_data: List[Dict[str, Any]]
+    top_loss_products: List[Dict[str, Any]]
+    top_profit_products: List[Dict[str, Any]]
+    loss_table_data: List[Dict[str, Any]]
+    profit_table_data: List[Dict[str, Any]]
 
 
 class SalesOrderModel(BaseModel): # type: ignore
@@ -121,11 +110,10 @@ class DepartmentUserCreate(BaseModel):
     first_name: str
     last_name: str
     email: EmailStr
-    phone: Optional[str] = None
+    phone: str  # Made required since backend service expects it
     password: str
     role: str  # 'sales' or 'procurement'
-    # org_id: str
-    # id: str  # Admin ID
+   
 
 class DepartmentUserResponse(BaseModel):
     id: str
@@ -134,6 +122,15 @@ class DepartmentUserResponse(BaseModel):
     department: str
     status: int
     created_at: datetime
+
+class DepartmentUserUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    status: Optional[int] = None
 
 class RaiseRequestOrderModel(BaseModel):
     order_id: str             # To fetch product info

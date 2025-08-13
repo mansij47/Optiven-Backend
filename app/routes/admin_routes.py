@@ -2,21 +2,23 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 # from app.models.super_admin_models import HTTPException, Request, Query, Body
 from app.models.admin_login_model import LoginModel
-from app.services import admin_login_service as svc
+# from app.services import admin_login_service as svc
 from typing import Optional,List
 from app import db
 import traceback
 from jose import jwt, JWTError
 from bson import ObjectId
 import os
-from app.models.admin_model import DepartmentUserCreate, EditOrderModel, LoginModel, NewRaiseOrderRequest, Product, RaiseRequestOrderModel, ResetPasswordRequest, SalesOrderModel ,ProductUpdate
+from app.models.admin_model import DepartmentUserCreate, DepartmentUserUpdate, EditOrderModel, LoginModel, NewRaiseOrderRequest, Product, RaiseRequestOrderModel, ResetPasswordRequest, SalesOrderModel ,ProductUpdate
 from app.services import notification_service
+from app.services import admin_lossOrders_service
 from app.services.admin_inventory_service import delete_product_service, update_product_by_id, export_inventory_csv, get_product_by_id, get_all_products, add_product_service 
-from app.services.admin_lossOrders_service import export_loss_orders_csv, get_all_loss_orders_with_metrics 
+# from app.services.admin_lossOrders_service import export_loss_orders_csv, get_all_loss_orders_with_metrics 
+from app.services.admin_lossOrders_service import  get_loss_data_by_user
 from app.services.admin_receivedOrders_service import delete_order_by_id, get_all_sales_orders, update_sales_order
 from app.services.admin_requested_order_service import get_all_requested_orders, raise_order_request_service, raise_request_order_service
 from app.services.admin_soldOrders_service import add_sales_order, get_all_sold_orders
-from app.services.admin_user_service import create_department_user, delete_user_by_id, reset_password
+from app.services.admin_user_service import create_department_user,get_all_employees,get_employee_by_id,update_employee_by_id, delete_user_by_id
 from app.models.admin_model import EditOrderModel
 
 # Importing the notification model and service
@@ -70,23 +72,16 @@ async def fetch_dashboard_data(request: Request):
 
     data = await get_dashboard_data()
     return data
+#loss data api
+@router.get("/report/lossOrders")
+async def get_loss_dashboard_data(request: Request):
+    user = request.state.user  # Already set by your middleware
 
+    if not user or "id" not in user:
+        return {"detail": "Unauthorized"}, 401
 
+    return await get_loss_data_by_user(user["id"])
 # ================== NOTIFICATIONS ==================
-#create the notification by the sales , procurement department to sent the notification to the admin
-# @router.post("/send/notification")
-# async def send_notification(
-#     model: NotificationBase,
-#     admin: Optional[bool] = Query(False),
-#     sales: Optional[bool] = Query(False),
-#     procurement: Optional[bool] = Query(False)
-# ):
-#     return await notification_service.create_notification(
-#         model,
-#         admin=admin,
-#         sales=sales,
-#         procurement=procurement
-#     )
 @router.post("/notification")
 async def send_notification(
     request: Request,  # ✅ Move request to the top
@@ -141,47 +136,6 @@ async def delete_notification(request: Request, notification_id: str):
         raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-# ================== ADMIN SETUP_SETTING ================
-
-# NEW: Get admin setup_setting details for the current admin
-@router.get("/setting")
-async def get_admin_setup_setting_details(request: Request):
-    admin_id = request.state.user.get("id")
-    if not admin_id:
-        raise HTTPException(status_code=401, detail="Admin ID not found in token")
-    details = await get_admin_setting(admin_id)
-    if not details:
-        raise HTTPException(status_code=404, detail="Admin not found")
-    return details  # details is already {"admin": ...}
-
-
-# Update 
-@router.patch("/setting")
-async def admin_first_time_setup_setting(request: Request, setup_data: AdminSetupSettingRequest):
-    try:
-        admin_id = request.state.user.get("id")
-        if not admin_id:
-            raise HTTPException(status_code=401, detail="Admin ID not found in token")
-
-    except (JWTError, ValueError):
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-    # Step 2: Filter fields to update
-    update_fields = {k: v for k, v in setup_data.dict().items() if v is not None}
-    if not update_fields:
-        raise HTTPException(status_code=400, detail="No fields to update")
-
-    # Step 3: Update admin by _id (MongoDB _id)
-    updated_admin = await update_admin_setting(admin_id, update_fields)
-
-    if not updated_admin:
-        raise HTTPException(status_code=404, detail="Admin not found or update failed")
-
-    return updated_admin
-
-
-# ================== CATEGORY ==================
 
 # Create a new category
 @router.post("/categories")
@@ -348,27 +302,6 @@ async def export_loss_orders(request: Request):
         raise HTTPException(status_code=500, detail=str(e))    
 
 
-@router.get("/lossorders/report")
-async def fetch_loss_orders_and_metrics(
-    request: Request,
-    total_inventory_value: Optional[float] = Query(100000.0)
-):
-    user = request.state.user
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Forbidden: Admin access required.")
-    
-    store_id = user.get("store_id")
-    org_id = user.get("org_id")
-
-    if not store_id or not org_id:
-        raise HTTPException(status_code=400, detail="Missing store_id or org_id in token.")
-
-    return await get_all_loss_orders_with_metrics(
-        store_id=store_id,
-        org_id=org_id,
-        total_inventory_value=total_inventory_value # type: ignore
-    )
-
 
 @router.get("/requested-orders")
 async def get_orders(request: Request): # type: ignore
@@ -399,10 +332,31 @@ async def add_employee(data: DepartmentUserCreate, request: Request):
     user = request.state.user  # This comes from JWT middleware
     return await create_department_user(data, user)
 
+@router.get("/employees")
+async def fetch_employees(request: Request):
+    user_info = request.state.user
+    return await get_all_employees(user_info)
 
-@router.delete("/delete/{employee_id}")
-async def delete_user(employee_id: str, request: Request):
-    return await delete_user_by_id(employee_id, request)
+
+@router.get("/employees/{emp_id}")
+async def fetch_employee_by_id(emp_id: str, request: Request):
+    user_info = request.state.user
+    return await get_employee_by_id(emp_id, user_info)
+
+@router.patch("/employees/{emp_id}")
+async def update_employee(emp_id: str, data: DepartmentUserUpdate, request: Request):
+    user_info = request.state.user
+    return await update_employee_by_id(emp_id, data, user_info)
+
+@router.delete("/employees/{emp_id}")
+async def delete_employee(emp_id: str, request: Request):
+    # Assuming your middleware attaches user info here:
+    user_info = getattr(request.state, "user", None)
+
+    if not user_info:
+        raise HTTPException(status_code=401, detail="Unauthorized: User info missing")
+
+    return await delete_user_by_id(emp_id, user_info)
 
 
 # this is from sales
@@ -552,3 +506,19 @@ async def get_sold_orders(request: Request):
     orders = await get_all_sold_orders(store_id)
 
     return {"orders": orders}
+
+#List of loss orders 
+@router.get("/loss-orders")
+async def get_loss_orders(request: Request):
+    user = request.state.user
+
+    if not user or "store_id" not in user:
+        raise HTTPException(status_code=401, detail="Unauthorized: store_id missing")
+
+    if user["role"] != "procurement" and user["role"] !="admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Procurement access required")
+
+    store_id = user["store_id"]
+
+    return await admin_lossOrders_service.get_loss_orders_by_store(store_id)
+

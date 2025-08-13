@@ -10,76 +10,7 @@ from uuid import uuid4
 # Accessing Notifications collection without needing db.Notifications
 notifications_collection = db.Notifications
 
-# async def create_notification(
-#     notification: NotificationBase,
-#     admin: Optional[bool] = False,
-#     sales: Optional[bool] = False,
-#     procurement: Optional[bool] = False
-# ):
-#     data = notification.dict()
 
-#     # ✅ Add timestamp info
-#     now = datetime.now()
-#     data["date"] = now.strftime('%Y-%m-%d')
-#     data["time"] = now.strftime('%H:%M')
-#     data["status"] = 0
-
-#     # ✅ Define selected roles from query params
-#     selected_roles = {
-#         "admin": admin,
-#         "sales": sales,
-#         "procurement": procurement,
-#     }
-
-#     sender_store_id = notification.sender.store_id
-#     target_emails = notification.emails or []
-#     responses = []
-
-#     for role, send_flag in selected_roles.items():
-#         if not send_flag:
-#             continue
-
-#         # 🔍 Get all users in this role & store
-#         user_query = {
-#             "role": role,
-#             "store_id": sender_store_id
-#         }
-#         if target_emails:
-#             user_query["email"] = {"$in": target_emails}  # ✅ Filter by email
-
-
-#         users = await db.Users.find(user_query).to_list(length=None)
-
-#         for user in users:
-#             user_id = user.get("id")
-#             if not user_id:
-#                 print(f"⚠️ User missing 'id': {user}")
-#                 continue
-
-#             notification_id = f"NOTI{datetime.utcnow().strftime('%Y%m%d%H%M%S')}{random.randint(100, 999)}"
-
-#             new_data = data.copy()
-#             new_data["notification_id"] = notification_id
-#             new_data["receiver"] = {
-#                 "role": role,
-#                 "id": user_id,
-#                 "store_id": user.get("store_id"),
-#                 "email": user.get("email")
-#             }
-
-#             # ✅ Insert into DB 
-#             result = await notifications_collection.insert_one(new_data)
-
-#             responses.append({
-#                 "notification_id": notification_id,
-#                 "receiver_id": user_id,
-#                 "mongo_id": str(result.inserted_id)
-#             })
-
-#     return {
-#         "message": f"{len(responses)} notification(s) sent successfully",
-#         "notifications": responses
-#     }
 async def create_notification(
     notification: NotificationBase,
     admin: Optional[bool] = False,

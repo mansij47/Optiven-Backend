@@ -50,8 +50,8 @@ def root():
 async def get_orders(request: Request):
     user = request.state.user
 
-    if user.get("role") != "procurement":
-        raise HTTPException(status_code=403, detail="Only procurement users are allowed.")
+    if user["role"] != "procurement" and user["role"] !="admin": 
+        raise HTTPException(status_code=403, detail="Only procurement and admin users are allowed.")
     storeId = user.get("store_id")
     return await procurement_requestedOrder_service.get_all_requested_orders(storeId)
 
@@ -238,8 +238,8 @@ async def get_loss_orders(request: Request):
     if not user or "store_id" not in user:
         raise HTTPException(status_code=401, detail="Unauthorized: store_id missing")
 
-    if user["role"] != "procurement":
-        raise HTTPException(status_code=403, detail="Forbidden: Procurement access required")
+    if user["role"] != "procurement" and user["role"] !="admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Procurement and Admin access required")
 
     store_id = user["store_id"]
 

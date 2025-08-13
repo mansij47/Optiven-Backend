@@ -3,41 +3,41 @@ from bson import ObjectId
 from fastapi import HTTPException, Request
 from datetime import datetime
 import bcrypt
-from pymongo import DESCENDING
 
 from app.db import db
 from app.models.super_admin_models import UserModel
-# from app.services.admin_setup_service import hash_password
 from app.utils.auth import hash_password
 from app.utils.email_utils import send_welcome_email
-# from app.utils.email_forgot import send_reset_email
+
 
 async def create_department_user(data, user_info):
     try:
+        # Validate role
         if data.role not in ["sales", "procurement"]:
             raise HTTPException(status_code=400, detail="Invalid role/department")
 
-        # Get org/store from token only
+        # Extract org and store IDs from token/user info
         org_id = user_info.get("org_id")
         store_id = user_info.get("store_id")
 
         if not org_id or not store_id:
             raise HTTPException(status_code=403, detail="Missing org_id or store_id in token")
 
-        # Check if email already exists
+        # Check if email already exists in Users collection
         existing = await db.Users.find_one({"email": data.email})
         if existing:
             raise HTTPException(status_code=400, detail="User with this email already exists")
 
-        # Auto-generate custom user
-
-        # Hash password
+        # Hash the password securely
         hashed_password = bcrypt.hashpw(data.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+        # Current timestamp
         today = datetime.utcnow()
 
-        new_id = str(uuid.uuid4())  # Generate a new UUID for the employee_id
+        # Generate a unique UUID for this employee
+        new_id = str(uuid.uuid4())
 
-        # Prepare user document
+        # Prepare user document using your Pydantic model
         user_doc = UserModel(
             id=new_id,
             name={
@@ -57,182 +57,166 @@ async def create_department_user(data, user_info):
             extra=""
         )
 
-
-
-        # Insert into Users collection
+        # Insert user into Users collection
         await db.Users.insert_one(user_doc.model_dump())
 
-        # Update department array in Stores
-        await db.Stores.update_one(
-            {"org_id": org_id, "store_id": store_id},
-            {
-                "$push": {
-                    "departments": {
-                        "department": data.role,
-                        "employee_id": new_id
-                    }
-                }
-            }
-        )
-#         res = send_welcome_email(to_email=doc.get("email"), password=doc.get("password"))
-#         print("Email sent status:", res)
-#         if not res:
-#             raise HTTPException(status_code=500, detail="Failed to send welcome email")
-#         return {
-#             "message": f"{data.role.capitalize()} employee created successfully",
-#             "employee_id": new_id,
-#             "store_id": store_id,
-#             "email": doc.get("email"),
-#             "password": password
-#         }
-
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Failed to create employee: {str(e)}")
-    
-     
-#     try:
-#         res = send_welcome_email(to_email=doc.get("email"), password=doc.get("password"))
-#         print("Email sent status:", res)
-#         if not res:
-#             raise HTTPException(status_code=500, detail="Failed to send welcome email")
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Failed to send credentials: {str(e)}")
-
-# return {
-#     "store_id": store_id,
-#     "store_email": doc.get("store_email"),
-#     "password": password
-# }
-        print("User created successfully:", user_doc)
+        # Push employee reference into the store's departments array in Stores collection
         try:
-            res = send_welcome_email(
-                to_email=data.email,
-                password=data.password  # original (non-hashed) password
-                # employee_id=new_id
+            # First check if store exists and initialize departments array if needed
+            store = await db.Stores.find_one({"org_id": org_id, "store_id": store_id})
+            if not store:
+                raise HTTPException(status_code=404, detail="Store not found")
+            
+            # Initialize departments array if it doesn't exist
+            if "departments" not in store:
+                await db.Stores.update_one(
+                    {"org_id": org_id, "store_id": store_id},
+                    {"$set": {"departments": []}}
+                )
+            
+            # Now add the employee to departments
+            await db.Stores.update_one(
+                {"org_id": org_id, "store_id": store_id},
+                {"$push": {"departments": {"department": data.role, "employee_id": new_id}}}
             )
-            print("Email sent status:", res)
-            if not res:
-                raise HTTPException(status_code=500, detail="Failed to send welcome email")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to send credentials: {str(e)}")
+            # If departments update fails, we should still create the user
+            # but log the error for debugging
+            print(f"Warning: Failed to update store departments: {str(e)}")
+            # Don't fail the entire operation for this
 
+        # Send welcome email with original password (handle errors)
+        try:
+            res = send_welcome_email(to_email=data.email, password=data.password)
+            if not res:
+                raise HTTPException(status_code=404, detail="Failed to send welcome email")
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"User already exist: {str(e)}")
+
+        # Return success message
         return {
             "message": f"{data.role.capitalize()} employee created and email sent successfully",
-            # "employee_id": new_id,
-            "email": data.email
+            "email": data.email,
+            "employee_id": new_id  # returning new UUID as employee identifier
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create employee: {str(e)}")
+    
+async def get_all_employees(user_info):
+    org_id = user_info.get("org_id")
+    store_id = user_info.get("store_id")
+
+    if not org_id or not store_id:
+        raise HTTPException(status_code=403, detail="Missing org_id or store_id in token")
+
+    cursor = db.Users.find({"org_id": org_id, "store_id": store_id})
+    employees = []
+    async for emp in cursor:
+        emp.pop("password", None)  # Hide password hash
+
+        if "_id" in emp and isinstance(emp["_id"], ObjectId):
+            emp["_id"] = str(emp["_id"])
+
+        employees.append(emp)
+
+    return employees
 
 
+async def get_employee_by_id(emp_id: str, user_info):
+    org_id = user_info.get("org_id")
+    store_id = user_info.get("store_id")
+
+    if not org_id or not store_id:
+        raise HTTPException(status_code=403, detail="Missing org_id or store_id in token")
+
+    employee = await db.Users.find_one({"id": emp_id, "org_id": org_id, "store_id": store_id})
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    employee.pop("password", None)
+
+    if "_id" in employee and isinstance(employee["_id"], ObjectId):
+        employee["_id"] = str(employee["_id"])
+
+    return employee
 
 
-async def delete_user_by_id(employee_id: str, request: Request):
-    # try:
-    #     # User_id = ObjectId(user_id)
-    # except:    
-    #     raise HTTPException(status_code=400, detail="Invalid ObjectID format")
+async def update_employee_by_id(emp_id: str, data, user_info):
+    org_id = user_info.get("org_id")
+    store_id = user_info.get("store_id")
 
-    # user_token_data = request.state.user
-    # if not user_token_data or not all(k in user_token_data for k in ["org_id", "store_id", "role"]):
-    #     raise HTTPException(status_code=403, detail="Invalid or missing token data")
+    if not org_id or not store_id:
+        raise HTTPException(status_code=403, detail="Missing org_id or store_id in token")
 
-    # org_id = user_token_data["org_id"]
-    # store_id = user_token_data["store_id"]
+    update_data = {}
 
-    # # Step 1: Find the user first
-    # user = await db.Users.find_one({"_id": User_id}, {"_id": 0})
-    # if not user:
-    #     raise HTTPException(status_code=404, detail="User not found")
+    if getattr(data, "first_name", None) or getattr(data, "last_name", None):
+        update_data["name.first_name"] = getattr(data, "first_name", None)
+        update_data["name.last_name"] = getattr(data, "last_name", None)
 
-    # # Step 2: Delete user
-    # result = await db.Users.delete_one({"_id": User_id})
+    if getattr(data, "email", None):
+        existing = await db.Users.find_one({"email": data.email, "id": {"$ne": emp_id}})
+        if existing:
+            raise HTTPException(status_code=400, detail="Another user with this email already exists")
+        update_data["email"] = data.email
 
+    if getattr(data, "phone", None):
+        update_data["phone"] = data.phone
 
-    # # user_role = user.get("role")
-    # # await db.Users.delete_one({"_id": User_id})
+    if getattr(data, "role", None):
+        if data.role not in ["sales", "procurement"]:
+            raise HTTPException(status_code=400, detail="Invalid role")
+        update_data["role"] = data.role
 
+    if getattr(data, "password", None):
+        hashed_password = bcrypt.hashpw(data.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        update_data["password"] = hashed_password
 
-    # # Step 3: Remove from store's departments array
-    # await db.Stores.update_one(
-    #     {"org_id": org_id, "store_id": store_id},
-    #     {
-    #         "$pull": {
-    #             "departments": {
-    #                 "department": user["role"],
-    #                 "employee_id": str(User_id)
-    #             }
-    #         }
-    #     }
-    # )
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
 
-    # return {"message": "User and department reference deleted successfully"}
+    update_data["updated_at"] = datetime.utcnow()
 
-    try:
-        user_token_data = request.state.user
-        if not user_token_data or not all(k in user_token_data for k in ["org_id", "store_id", "role"]):
-            raise HTTPException(status_code=403, detail="Invalid or missing token data")
-
-        org_id = user_token_data["org_id"]
-        store_id = user_token_data["store_id"]
-
-        # Step 1: Find the user using employee_id (not _id)
-        user = await db.Users.find_one({"employee_id": employee_id})
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        user_id = user["_id"]  # ObjectId
-        user_role = user.get("role")
-
-        # Step 2: Delete user
-        delete_result = await db.Users.delete_one({"_id": user_id})
-        if delete_result.deleted_count == 0:
-            raise HTTPException(status_code=500, detail="Failed to delete user")
-
-        # Step 3: Remove employee from store's departments array
-        update_result = await db.Stores.update_one(
-            {"org_id": org_id, "store_id": store_id},
-            {
-                "$pull": {
-                    "departments": {
-                        "department": user_role,
-                        "employee_id": employee_id
-                    }
-                }
-            }
-        )
-
-        return {"message": "User and department reference deleted successfully"}
-
-    except HTTPException as e:
-        raise e  # Reraise handled exceptions
-
-    except Exception as e:
-        # Catch-all for unexpected errors
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-
-#forgot password handler
-
-async def reset_password(email: str, user_id: str, new_password: str):
-    # Validate ObjectId
-    try:
-        obj_id = ObjectId(user_id)
-    except:
-        raise HTTPException(status_code=400, detail="Invalid user ID")
-
-    user = await db.Users.find_one({"_id": obj_id})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found by ID")
-
-    if user["email"].lower() != email.lower():
-        raise HTTPException(status_code=400, detail="Email does not match the user")
-
-    hashed_pw = hash_password(new_password)
-    await db.Users.update_one(
-        {"_id": obj_id},
-        {"$set": {"password": hashed_pw}}
+    result = await db.Users.update_one(
+        {"id": emp_id, "org_id": org_id, "store_id": store_id},
+        {"$set": update_data}
     )
 
-    return {"message": "Password updated successfully"}
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    if "role" in update_data:
+        try:
+            await db.Stores.update_one(
+                {"org_id": org_id, "store_id": store_id, "departments.employee_id": emp_id},
+                {"$set": {"departments.$.department": update_data["role"]}}
+            )
+        except Exception as e:
+            print(f"Warning: Failed to update store departments: {str(e)}")
+            # Don't fail the entire operation for this
+
+    return {"message": "Employee updated successfully"}
+
+
+async def delete_user_by_id(emp_id: str, user_info: dict):
+    org_id = user_info.get("org_id")
+    store_id = user_info.get("store_id")
+
+    if not org_id or not store_id:
+        raise HTTPException(status_code=403, detail="Missing org_id or store_id in token")
+
+    result = await db.Users.delete_one({"id": emp_id, "org_id": org_id, "store_id": store_id})
+
+    try:
+        await db.Stores.update_one(
+            {"org_id": org_id, "store_id": store_id},
+            {"$pull": {"departments": {"employee_id": emp_id}}}
+        )
+    except Exception as e:
+        print(f"Warning: Failed to remove employee from store departments: {str(e)}")
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    return {"message": "Employee deleted successfully"}
