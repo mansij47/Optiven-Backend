@@ -8,6 +8,8 @@ loss_orders_collection = db.LossOrders
 users_collection = db.Users
 sales_orders_collection = db.SalesOrders  # For revenue calculation
 
+
+# 🔹 Dashboard: All data is filtered by store_id from logged-in user
 async def get_loss_data_by_user(user_id: str):
     user = await users_collection.find_one({"_id": ObjectId(user_id)})
     if not user:
@@ -17,6 +19,7 @@ async def get_loss_data_by_user(user_id: str):
     if not store_id:
         raise HTTPException(status_code=400, detail="Store ID not found for user")
 
+    # ---------- Loss Orders (filtered by store_id) ----------
     cursor = loss_orders_collection.find({"store_id": store_id})
     loss_data = []
     total_items_lost = 0
@@ -42,8 +45,9 @@ async def get_loss_data_by_user(user_id: str):
         total_items_lost += quantity
         total_loss += loss_value
 
-    # ---------- 🔥 Revenue Calculation ----------
+    # ---------- Revenue Calculation (filtered by store_id) ----------
     revenue_pipeline = [
+        {"$match": {"store_id": store_id}},   # ✅ only this store
         {"$unwind": "$products"},
         {
             "$addFields": {
@@ -58,7 +62,7 @@ async def get_loss_data_by_user(user_id: str):
         {
             "$group": {
                 "_id": None,
-                "total_revenue": { "$sum": "$total_price" }
+                "total_revenue": {"$sum": "$total_price"}
             }
         }
     ]
@@ -66,12 +70,12 @@ async def get_loss_data_by_user(user_id: str):
     revenue_result = await sales_orders_collection.aggregate(revenue_pipeline).to_list(length=1)
     total_revenue = round(revenue_result[0]["total_revenue"], 2) if revenue_result else 0
 
-    # Top 5 loss products
+    # ---------- Top 5 Loss Products ----------
     top_loss_products = sorted(
         loss_data, key=lambda x: x.get("loss_value", 0), reverse=True
     )[:5]
 
-    # Daily loss chart data
+    # ---------- Daily Loss Chart ----------
     daily_loss = {}
     for item in loss_data:
         created_date = item.get("date_reported")
@@ -85,12 +89,12 @@ async def get_loss_data_by_user(user_id: str):
 
     chart_data = [{"day": day, "loss": loss} for day, loss in daily_loss.items()]
 
-    # Final structured response
+    # ---------- Final Response ----------
     return {
         "metrics": {
             "total_loss": round(total_loss, 2),
             "total_items_lost": int(total_items_lost),
-            "total_revenue": total_revenue  # ✅ Only the real revenue
+            "total_revenue": total_revenue
         },
         "top_loss_products": top_loss_products,
         "chart_data": chart_data,
@@ -98,9 +102,16 @@ async def get_loss_data_by_user(user_id: str):
     }
 
 
+# 🔹 List of Loss Orders (filtered by store_id)
+async def get_loss_orders_by_store(user_id: str):
+    user = await users_collection.find_one({"_id": ObjectId(user_id)})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-#List of Loss Orders
-async def get_loss_orders_by_store(store_id: str):
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID not found for user")
+
     cursor = db.LossOrders.find({"store_id": store_id})
     loss_orders = []
 
@@ -115,9 +126,7 @@ async def get_loss_orders_by_store(store_id: str):
         except (ValueError, TypeError):
             loss = 0.0
 
-        # ✅ Add `loss_amount` just for response
         order["loss_amount"] = round(loss, 2)
-
         loss_orders.append(order)
 
     if not loss_orders:
@@ -126,8 +135,16 @@ async def get_loss_orders_by_store(store_id: str):
     return loss_orders
 
 
-#Veiw loss order details by Product_id 
-async def get_loss_orders_by_product_id(product_id: str, store_id: str):
+# 🔹 View Loss Orders by Product (filtered by store_id)
+async def get_loss_orders_by_product_id(product_id: str, user_id: str):
+    user = await users_collection.find_one({"_id": ObjectId(user_id)})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID not found for user")
+
     cursor = db.LossOrders.find({
         "product_id": product_id,
         "store_id": store_id
@@ -146,9 +163,7 @@ async def get_loss_orders_by_product_id(product_id: str, store_id: str):
         except (ValueError, TypeError):
             loss = 0.0
 
-        # ✅ Add `loss_amount` just for response
         order["loss_amount"] = round(loss, 2)
-
         loss_orders.append(order)
 
     if not loss_orders:

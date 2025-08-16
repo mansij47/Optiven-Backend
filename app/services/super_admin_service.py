@@ -295,17 +295,26 @@ async def update_store_status(store_id: str, status: int)-> int:
     return res.modified_count
 
 # ───────────────────────── CATEGORY / SUBCATEGORY
-async def get_categories(store_id: str) -> List[Dict[str, Any]]:
+
+async def get_categories(store_id: str) -> Dict[str, Any]:
     store = await db.Stores.find_one({"store_id": store_id})
     if not store:
-        return []
+        return {
+            "status": "success",
+            "message": f"No store found with id {store_id}",
+            "categories": []
+        }
 
     # Extract category IDs from list of dicts
     category_dicts = store.get("category_ids", [])
     category_ids = [cat["id"] for cat in category_dicts if "id" in cat]
 
     if not category_ids:
-        return []
+        return {
+            "status": "success",
+            "message": f"No categories found for store {store_id}",
+            "categories": []
+        }
 
     # Query the categories collection
     categories = await db.Categories.find(
@@ -313,7 +322,19 @@ async def get_categories(store_id: str) -> List[Dict[str, Any]]:
         {"_id": 0}
     ).to_list(length=None)
 
-    return categories
+    if not categories:
+        return {
+            "status": "success",
+            "message": f"No categories found for store {store_id}",
+            "categories": []
+        }
+
+    return {
+        "status": "success",
+        "message": "Categories fetched successfully",
+        "categories": categories
+    }
+
 
 async def get_category_by_id(category_id: str) -> Optional[Dict[str, Any]]:
     return await db.Categories.find_one({"category_id": category_id}, {"_id": 0})

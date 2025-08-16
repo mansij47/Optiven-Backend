@@ -159,10 +159,9 @@ async def update_status(store_id: str, status_update: UpdateStoreStatusModel):
 # ── CATEGORY / SUBCATEGORY ───────────────
 @router.get("/stores/{store_id}/categories")
 async def list_categories(store_id: str):
-    categories = await svc.get_categories(store_id)
-    if not categories:
-        raise HTTPException(status_code=404, detail="No categories found for this store")
-    return {"categories": categories}
+    result = await svc.get_categories(store_id)
+    return result
+
 
 @router.get("/categories/{category_id}")
 async def get_category(category_id: str):
