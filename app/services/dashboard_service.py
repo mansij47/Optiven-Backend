@@ -25,13 +25,11 @@ async def get_dashboard_data(store_id: str):
         "quantity": {"$lte": 0}
     })
 
-    # ---------- 4. Unique Visits ----------
-    unique_visits = 1034  # static for now
-
     # ---------- 5. Total Revenue ----------
     revenue_pipeline = [
         { "$match": store_filter },
         { "$unwind": "$products" },
+        { "$match": { "products.store_id": store_id } },  # ✅ ensure revenue is only for products with same store_id
         {
             "$group": {
                 "_id": None,
@@ -61,6 +59,7 @@ async def get_dashboard_data(store_id: str):
     finance_pipeline = [
         { "$match": store_filter },
         { "$unwind": "$products" },
+        { "$match": { "products.store_id": store_id } },  # ✅ filter by product store_id
         {
             "$addFields": {
                 "total_price": {
@@ -121,6 +120,7 @@ async def get_dashboard_data(store_id: str):
     top_selling_pipeline = [
         { "$match": store_filter },
         { "$unwind": "$products" },
+        { "$match": { "products.store_id": store_id } },  # ✅ filter products by store_id
         {
             "$group": {
                 "_id": "$products.product_name",
@@ -141,18 +141,12 @@ async def get_dashboard_data(store_id: str):
     top_selling_cursor = sales_orders_collection.aggregate(top_selling_pipeline)
     top_selling_products = [doc async for doc in top_selling_cursor]
 
-    # # ---------- 9. Loss Products ----------
-    # loss_cursor = loss_products_collection.find(store_filter, {"_id": 0})
-    # loss_products = await loss_cursor.to_list(length=None)
-
     return {
         "total_items": total_items,
         "low_stock_items": low_stock_items,
         "out_of_stock_items": out_of_stock_items,
-        "unique_visits": unique_visits,
         "revenue": total_revenue,
         "inventory_status": inventory_status,
         "finance_report": finance_report,
         "top_selling_products": top_selling_products,
-        # "loss_products": loss_products
     }

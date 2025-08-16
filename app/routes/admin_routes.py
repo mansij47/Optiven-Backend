@@ -78,10 +78,10 @@ async def fetch_dashboard_data(request: Request):
 #loss data api
 @router.get("/report/lossOrders")
 async def get_loss_dashboard_data(request: Request):
-    user = request.state.user  # Already set by your middleware
+    user = request.state.user  # ✅ Already set by your middleware
 
     if not user or "id" not in user:
-        return {"detail": "Unauthorized"}, 401
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     return await get_loss_data_by_user(user["id"])
 # ================== NOTIFICATIONS ==================

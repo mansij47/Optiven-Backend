@@ -7,7 +7,6 @@ from bson.objectid import ObjectId
 async def get_loss_orders_by_store(store_id: str):
     cursor = db.LossOrders.find({"store_id": store_id})
     loss_orders = []
-
     async for order in cursor:
         order.pop("_id", None)
 
@@ -24,8 +23,8 @@ async def get_loss_orders_by_store(store_id: str):
 
         loss_orders.append(order)
 
-    if not loss_orders:
-        raise HTTPException(status_code=404, detail="No loss orders found for this store.")
+        if not loss_orders:
+            return []
 
     return loss_orders
 
