@@ -156,44 +156,48 @@ async def get_stores():                        # list
 #     # print("User document to be inserted:", user_doc)
 #     return store_id
 
-async def create_store(data: CreateStoreModel, send_email) :
+async def create_store(data: CreateStoreModel, send_email):
     doc = data.model_dump()
     org_id = uuid.uuid4()
     # Ensure unique store_id
     if await db.Stores.find_one({"store_id": doc["store_id"]}):
         doc["store_id"] = await _next_id(db.Stores, "store_id", "ST")
-        doc["org_id"] = str(org_id)  # Generate a new org_id if store_id is new
-    # now = datetime.utcnow().isoformat()
+        doc["org_id"] = str(org_id)
     now = datetime.utcnow()
     doc["created_at"] = now
     doc["updated_at"] = now
-    result = await db.Stores.insert_one(doc)
     store_id = doc["store_id"]
     password = doc.get("password", "")
 
     user_model = UserModel(
         id=doc.get("admin_id"),
-        org_id=str(org_id) ,
+        org_id=str(org_id),
         store_id=store_id,
         password=hash_password(password),
-        phone=doc.get("address", {}).get("phone"),  # ✅ Fix,
+        phone=doc.get("address", {}).get("phone"),
         email=doc.get("store_email"),
         name=doc.get("admin_name"),
         joining_date=now
     )
 
-    await db.Users.insert_one(user_model.model_dump())
+    # Check if user already exists
+    existing_user = await db.Users.find_one({"email": user_model.email})
+    if existing_user:
+        raise HTTPException(status_code=400, detail="User with this email already exists")
 
-    # If email is True, send credentials
+    # If email is True, send credentials first
     if send_email:
         try:
             res = send_welcome_email(to_email=doc.get("store_email"), password=doc.get("password"))
-            print("Email sent status:", res)
             if not res:
                 raise HTTPException(status_code=500, detail="Failed to send welcome email")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to send credentials: {str(e)}")
-    
+
+    # Insert user and store only after email is sent successfully (if required)
+    await db.Users.insert_one(user_model.model_dump())
+    await db.Stores.insert_one(doc)
+
     return {
         "store_id": store_id,
         "store_email": doc.get("store_email"),

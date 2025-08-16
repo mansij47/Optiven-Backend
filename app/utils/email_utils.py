@@ -3,9 +3,9 @@ import os
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
-from dotenv import load_dotenv
 
-from app.config import EMAIL_HOST, EMAIL_PASSWORD, EMAIL_PORT, EMAIL_USER
+
+from app.config import EMAIL_HOST, EMAIL_PASSWORD, EMAIL_PORT, EMAIL_USER, LOGIN_URL
 
 # 👇 Your new HTML template function
 def get_welcome_template(email: str, password: str, login_url: str) -> str:
@@ -64,7 +64,7 @@ def send_welcome_email(to_email: str, password: str) -> bool:
         html = get_welcome_template(
             email=to_email,
             password=password,
-            login_url="http://localhost:3000/login"
+            login_url= LOGIN_URL
         )
 
         print("📧 Sending email to:", to_email)
