@@ -18,7 +18,7 @@ from app.services.admin_lossOrders_service import  get_loss_data_by_user
 from app.services.admin_receivedOrders_service import delete_order_by_id, get_all_sales_orders, update_sales_order
 from app.services.admin_requested_order_service import get_all_requested_orders, raise_order_request_service, raise_request_order_service
 from app.services.admin_soldOrders_service import add_sales_order, get_all_sold_orders
-from app.services.admin_user_service import create_department_user,get_all_employees,get_employee_by_id,update_employee_by_id, delete_user_by_id
+from app.services.admin_user_service import create_department_user, delete_user_by_objectId,get_all_employees,get_employee_by_id,update_employee_by_id, delete_user_by_id
 from app.models.admin_model import EditOrderModel
 
 # Importing the notification model and service
@@ -360,6 +360,16 @@ async def delete_employee(emp_id: str, request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized: User info missing")
 
     return await delete_user_by_id(emp_id, user_info)
+
+@router.delete("/employees/{emp_id}")
+async def delete_employee_by_id(emp_id: str, request: Request):
+    # Assuming your middleware attaches user info here:
+    user_info = getattr(request.state, "user", None)
+
+    if not user_info:
+        raise HTTPException(status_code=401, detail="Unauthorized: User info missing")
+
+    return await delete_user_by_objectId(emp_id, user_info)
 
 
 # this is from sales

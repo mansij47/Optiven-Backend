@@ -220,3 +220,21 @@ async def delete_user_by_id(emp_id: str, user_info: dict):
         raise HTTPException(status_code=404, detail="Employee not found")
 
     return {"message": "Employee deleted successfully"}
+
+
+
+
+async def delete_user_by_objectId(emp_id: str, user_info: dict):
+    org_id = user_info.get("org_id")
+    store_id = user_info.get("store_id")
+
+    if not org_id or not store_id:
+        raise HTTPException(status_code=403, detail="Missing org_id or store_id in token")
+
+    result = await db.Users.delete_one({"_id": ObjectId(emp_id)})
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    return {"message": "Employee deleted successfully"}
+
