@@ -62,16 +62,19 @@ def root():
 # ================== Dashboard ==================
 @router.get("/dashboard")
 async def fetch_dashboard_data(request: Request):
-    # You can now access role like this:
     user = request.state.user
     role = user.get("role")
+    store_id = user.get("store_id")   # ✅ Automatically available here
 
-    # Optional role check (if needed)
     if role != "admin":
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    data = await get_dashboard_data()
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID not found in user data")
+
+    data = await get_dashboard_data(store_id)  # ✅ Pass store_id
     return data
+
 #loss data api
 @router.get("/report/lossOrders")
 async def get_loss_dashboard_data(request: Request):

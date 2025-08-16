@@ -6,17 +6,22 @@ inventory_collection = db.Inventory
 sales_orders_collection = db.SalesOrders
 # loss_products_collection = db.LossProduct
 
-async def get_dashboard_data():
+async def get_dashboard_data(store_id: str):
+    # Add store_id filter
+    store_filter = {"store_id": store_id}
+
     # ---------- 1. Total Items ----------
-    total_items = await inventory_collection.count_documents({})
+    total_items = await inventory_collection.count_documents(store_filter)
 
     # ---------- 2. Low Stock Items ----------
     low_stock_items = await inventory_collection.count_documents({
+        **store_filter,
         "quantity": {"$lt": 10, "$gt": 0}
     })
 
     # ---------- 3. Out of Stock Items ----------
     out_of_stock_items = await inventory_collection.count_documents({
+        **store_filter,
         "quantity": {"$lte": 0}
     })
 
@@ -25,6 +30,7 @@ async def get_dashboard_data():
 
     # ---------- 5. Total Revenue ----------
     revenue_pipeline = [
+        { "$match": store_filter },
         { "$unwind": "$products" },
         {
             "$group": {
@@ -40,25 +46,26 @@ async def get_dashboard_data():
             }
         }
     ]
-
     revenue_cursor = sales_orders_collection.aggregate(revenue_pipeline)
     revenue_result = [doc async for doc in revenue_cursor]
     total_revenue = round(revenue_result[0]["total_revenue"], 2) if revenue_result else 0.0
 
     # ---------- 6. Inventory Status ----------
-    inventory_cursor = inventory_collection.find({}, {
-        "_id": 0, "product_name": 1, "quantity": 1
-    })
+    inventory_cursor = inventory_collection.find(
+        store_filter,
+        {"_id": 0, "product_name": 1, "quantity": 1}
+    )
     inventory_status = await inventory_cursor.to_list(length=None)
 
     # ---------- 7. Finance Report ----------
     finance_pipeline = [
-        {"$unwind": "$products"},
+        { "$match": store_filter },
+        { "$unwind": "$products" },
         {
             "$addFields": {
                 "total_price": {
                     "$multiply": [
-                        {"$toDouble": "$products.unit_price"},
+                        { "$toDouble": "$products.unit_price" },
                         "$products.quantity"
                     ]
                 }
@@ -76,16 +83,15 @@ async def get_dashboard_data():
             "$addFields": {
                 "average_order_value": {
                     "$cond": [
-                        {"$eq": ["$total_orders", 0]},
+                        { "$eq": ["$total_orders", 0] },
                         0,
-                        {"$divide": ["$total_sales", "$total_orders"]}
+                        { "$divide": ["$total_sales", "$total_orders"] }
                     ]
                 }
             }
         },
         { "$sort": { "_id": 1 } }
     ]
-
     finance_cursor = sales_orders_collection.aggregate(finance_pipeline)
     finance_data = [doc async for doc in finance_cursor]
 
@@ -113,6 +119,7 @@ async def get_dashboard_data():
 
     # ---------- 8. Top Selling Products ----------
     top_selling_pipeline = [
+        { "$match": store_filter },
         { "$unwind": "$products" },
         {
             "$group": {
@@ -121,7 +128,7 @@ async def get_dashboard_data():
                 "total_sales": {
                     "$sum": {
                         "$multiply": [
-                            {"$toDouble": "$products.unit_price"},
+                            { "$toDouble": "$products.unit_price" },
                             "$products.quantity"
                         ]
                     }
@@ -135,7 +142,7 @@ async def get_dashboard_data():
     top_selling_products = [doc async for doc in top_selling_cursor]
 
     # # ---------- 9. Loss Products ----------
-    # loss_cursor = loss_products_collection.find({}, {"_id": 0})
+    # loss_cursor = loss_products_collection.find(store_filter, {"_id": 0})
     # loss_products = await loss_cursor.to_list(length=None)
 
     return {
