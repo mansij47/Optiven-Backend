@@ -101,6 +101,8 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
                 "unit": contract.get("unit", "pcs"),
                 "category": contract.get("category", "misc"),
                 "sub_category": contract.get("sub_category", "misc"),
+                "quantity": contract.get("quantity"),
+                "unit_price": contract.get("unit_price"),
 
             }
             await purchase_orders_collection.insert_one(purchase_order)
