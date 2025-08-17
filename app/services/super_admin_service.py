@@ -583,7 +583,33 @@ async def delete_subcategory_from_category(category_id: str, sub_category_id: st
 #         raise RuntimeError(f"Failed to send credentials: {str(e)}")
 
 # ───────────────────────── HELP
-async def submit_help(data: HelpModel) -> str:
-    doc = data.model_dump() | {"submitted_at": datetime.utcnow().isoformat()}
+async def submit_help(data: HelpModel, user) -> str:
+    doc = data.model_dump()
+    doc["submitted_at"] = datetime.now().isoformat()
+
+    # Automatically add requested_by from middleware user
+    doc["requested_by"] = {
+        "id": str(user["id"]),
+        "email": str(user["email"]),
+        "role": str(user["role"]),
+    }
+
     saved = await db.Help.insert_one(doc)
     return str(saved.inserted_id)
+ # get all requests help 
+async def get_all_help():
+    cursor = db.Help.find({})
+    results = []
+    async for doc in cursor:
+        doc["id"] = str(doc["_id"])  # convert ObjectId to string
+        doc.pop("_id", None)
+        results.append(doc)
+    return results
+# get by id 
+async def get_help_by_id(ticket_id: str):
+    doc = await db.Help.find_one({"_id": ObjectId(ticket_id)})
+    if doc is None:
+        return None
+    doc["id"] = str(doc["_id"])
+    doc.pop("_id", None)
+    return doc
