@@ -1,4 +1,5 @@
-from typing import List
+from typing import List, Optional
+from app.models.store_model import StoresResponse
 from fastapi import APIRouter, HTTPException, Query, Request
 
 
@@ -113,6 +114,30 @@ async def list_stores(request: Request):
         raise HTTPException(403, "Access denied")
     return {"stores": await svc.get_stores()}
 
+@router.get("/v2/stores", response_model=StoresResponse)
+async def list_stores(
+    request: Request,
+    search: Optional[str] = Query(None, description="Search by store name or admin_id"),
+    status: Optional[str] = Query(None, description="Filter by status (active, disabled, draft, deleted, all)"),
+    statuses: Optional[List[str]] = Query(None, description="Filter by multiple statuses"),
+    date_from: Optional[str] = Query(None, description="Filter stores created after this date (ISO format)"),
+    date_to: Optional[str] = Query(None, description="Filter stores created before this date (ISO format)"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(5, ge=1, le=100, description="Number of stores per page")
+):
+    user = request.state.user
+    if not user.get("role") == "super_admin":
+        raise HTTPException(403, "Access denied")
+    
+    return await svc.get_stores(
+        search=search,
+        status=status,
+        statuses=statuses,
+        date_from=date_from,
+        date_to=date_to,
+        page=page,
+        page_size=page_size
+    )
 @router.post("/store")
 async def create_store(store_data: CreateStoreModel , send_email: bool = Query(False)):
     new_id = await svc.create_store(store_data, send_email)
