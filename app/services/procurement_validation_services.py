@@ -1,6 +1,7 @@
 from datetime import datetime
 from bson import ObjectId
 from app.db import db
+import uuid
 
 inventory_collection = db["Inventory"]
 loss_orders_collection = db["LossOrders"]
@@ -8,10 +9,12 @@ return_to_vendor_collection = db["ReturnToVendor"]
 purchase_orders_collection = db["PurchaseOrders"]
 
 async def validate_purchase_order(data, store_id: str, org_id: str):
+    
+    uuid_str = str(uuid.uuid4())
     # Add to Inventory
     if ((data.received_quantity == data.expected_quantity) or (data.received_quantity != data.expected_quantity)) and not data.is_product_damaged:
         inventory_data = {
-            "product_id": data.product_id or f"P{ObjectId()}"[:6],
+            "product_id": uuid_str,
             "org_id": org_id,
             "store_id": store_id,
             "product_name": data.product_name,
