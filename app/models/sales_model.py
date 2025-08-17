@@ -139,6 +139,7 @@ class ProductDetails(BaseModel):
     unit: Optional[str]
     store_id: Optional[str]  
     tax: Optional[float]  
+    consumer_return_conditions: Optional[List[str]]
 
 class SalesProductItem(BaseModel):
     product_id: str
