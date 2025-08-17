@@ -9,7 +9,8 @@ purchase_orders_collection = db["PurchaseOrders"]
 
 async def validate_purchase_order(data, store_id: str, org_id: str):
     # Add to Inventory
-    if (data.received_quantity == data.expected_quantity) and not data.is_product_damaged:
+    print(data)
+    if ((data.received_quantity == data.expected_quantity) or (data.received_quantity != data.expected_quantity)) and not data.is_product_damaged:
         inventory_data = {
             "product_id": data.product_id or f"P{ObjectId()}"[:6],
             "org_id": org_id,
@@ -28,6 +29,7 @@ async def validate_purchase_order(data, store_id: str, org_id: str):
             "has_warranty": data.has_warranty,
             "warranty_tenure": data.warranty_tenure,
             "warranty_unit": data.warranty_unit,
+            "unit": data.unit,
             "last_updated": datetime.utcnow().isoformat(),
         }
         await inventory_collection.insert_one(inventory_data)
@@ -43,7 +45,7 @@ async def validate_purchase_order(data, store_id: str, org_id: str):
             "category": data.category,
             "date_reported": datetime.utcnow().strftime("%Y-%m-%d"),
             "quantity_lost": data.expected_quantity - data.received_quantity,
-            "unit": data.quantity_unit,
+            "unit": data.unit,
             "unit_price": str(data.unit_price),
             "reason": "Damaged and not returnable",
         }
@@ -62,7 +64,7 @@ async def validate_purchase_order(data, store_id: str, org_id: str):
             "return_amount": str(data.unit_price * (data.expected_quantity - data.received_quantity)),
             "original_quantity": data.expected_quantity,
             "return_quantity": data.expected_quantity - data.received_quantity,
-            "unit": data.quantity_unit,
+            "unit": data.unit,
             "contract_id": data.contract_id,
             "purchase_date": datetime.utcnow().strftime("%Y-%m-%d"),
             "product_condition": "Damaged and returnable",
