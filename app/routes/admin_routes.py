@@ -415,18 +415,18 @@ async def raise_order_request_api(data: NewRaiseOrderRequest, request: Request):
     if not store_id or not org_id:
         raise HTTPException(status_code=400, detail="Store ID or Org ID missing in token.")
 
-    
+    requested_by = {
+        "role": user.get("role"),
+        "id": user.get("user_id", "unknown"),
+        "store_id": store_id
+    }
 
     # ✅ First process the order request
     response = await raise_order_request_service(data.dict(), org_id, store_id, requested_by)
 
     # ✅ Then create a notification for procurement
     from app.models.notification_model import UserInfo, NotificationBase  # adjust import paths as needed
-    requested_by = {
-        "role": user.get("role"),
-        "id": user.get("user_id", "unknown"),
-        "store_id": store_id
-    }
+
     notification = NotificationBase(
         sender=UserInfo(**requested_by),
         type_of_notification="Order Request",
