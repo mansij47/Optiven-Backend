@@ -105,7 +105,7 @@ async def send_notification(
         model,
         admin=admin,
         sales=sales,
-        procurement=procurement
+        procurement=procurement  
        
     )
 
