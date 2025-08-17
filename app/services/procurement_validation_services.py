@@ -9,7 +9,6 @@ purchase_orders_collection = db["PurchaseOrders"]
 
 async def validate_purchase_order(data, store_id: str, org_id: str):
     # Add to Inventory
-    print(data)
     if ((data.received_quantity == data.expected_quantity) or (data.received_quantity != data.expected_quantity)) and not data.is_product_damaged:
         inventory_data = {
             "product_id": data.product_id or f"P{ObjectId()}"[:6],
