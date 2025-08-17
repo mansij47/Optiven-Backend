@@ -1,5 +1,7 @@
-from typing import List
+from typing import List, Optional
+from app.models.store_model import StoresResponse
 from fastapi import APIRouter, HTTPException, Query, Request
+
 
 from app.models.super_admin_models import (
     SignupModel, LoginModel, StoreIdsModel, StoreUpdate, UpdateProfileModel, ChangePasswordModel,
@@ -112,6 +114,30 @@ async def list_stores(request: Request):
         raise HTTPException(403, "Access denied")
     return {"stores": await svc.get_stores()}
 
+@router.get("/v2/stores", response_model=StoresResponse)
+async def list_stores(
+    request: Request,
+    search: Optional[str] = Query(None, description="Search by store name or admin_id"),
+    status: Optional[str] = Query(None, description="Filter by status (active, disabled, draft, deleted, all)"),
+    statuses: Optional[List[str]] = Query(None, description="Filter by multiple statuses"),
+    date_from: Optional[str] = Query(None, description="Filter stores created after this date (ISO format)"),
+    date_to: Optional[str] = Query(None, description="Filter stores created before this date (ISO format)"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(5, ge=1, le=100, description="Number of stores per page")
+):
+    user = request.state.user
+    if not user.get("role") == "super_admin":
+        raise HTTPException(403, "Access denied")
+    
+    return await svc.get_stores(
+        search=search,
+        status=status,
+        statuses=statuses,
+        date_from=date_from,
+        date_to=date_to,
+        page=page,
+        page_size=page_size
+    )
 @router.post("/store")
 async def create_store(store_data: CreateStoreModel , send_email: bool = Query(False)):
     new_id = await svc.create_store(store_data, send_email)
@@ -237,6 +263,18 @@ async def remove_subcategory(category_id: str, sub_category_id: str):
 
 # ── HELP ──────────────────────────────────
 @router.post("/help")
-async def submit_help(help_data: HelpModel):
-    ticket = await svc.submit_help(help_data)
-    return {"message": "Help ticket created", "ticket_id": ticket}
+async def create_help_ticket(data: HelpModel, request: Request):
+    user = request.state.user  # Get the user from middleware
+    ticket_id = await svc.submit_help(data, user=user)
+    return {"message": "Help ticket created", "ticket_id": ticket_id}
+
+@router.get("/allHelp")
+async def get_all_help_tickets():
+    return await svc.get_all_help()
+
+@router.get("/help/{ticket_id}")
+async def get_help_ticket(ticket_id: str):
+    ticket = await svc.get_help_by_id(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Help ticket not found")
+    return ticket

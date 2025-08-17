@@ -207,7 +207,7 @@ async def add_product(request: Request, product: Product):
 async def fetch_all_products_route(request: Request):
     # Role check
     user = request.state.user
-    if not user or user.get("role") not in ["admin","procurement"]:
+    if not user or user.get("role") not in ["admin","procurement", "sales"]:
         raise HTTPException(status_code=403, detail="Forbidden: Admin access required.")
     
     store_id = user.get("store_id")

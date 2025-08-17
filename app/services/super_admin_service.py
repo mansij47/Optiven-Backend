@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 import uuid
+from app.models.store_model import StoresResponse
 from fastapi import HTTPException, Request
 from bson import ObjectId
 
@@ -126,10 +127,80 @@ async def get_dashboard_overview(_: Dict[str, Any]):
     return {"total": total, "active": active, "disabled": disabled, "draft": draft}
 
 # ───────────────────────── STORE
-async def get_stores():                        # list
+async def get_storess():                        # list
     return await db.Stores.find({}, {"_id": 0}).to_list(1000)
 
-# async def create_store(data: CreateStoreModel) -> str:
+async def get_stores(
+    search: Optional[str] = None,
+    status: Optional[str] = None,
+    statuses: Optional[List[str]] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 15
+) -> StoresResponse:
+    # Build MongoDB query
+    query = {}
+    
+    # Search filter - improved to handle partial matches better
+    if search and search.strip():
+        search_term = search.strip()
+        search_regex = {"$regex": f".*{search_term}.*", "$options": "i"}  # Case-insensitive partial match
+        query["$or"] = [
+            {"store_name": search_regex},
+            {"admin_id": search_regex},
+            {"store_email": search_regex},
+            {"store_id": search_regex}
+            # Add other searchable fields if needed
+            # {"description": search_regex},
+            # {"email": search_regex}
+        ]
+
+    # Status filter
+    status_map = {"active": 1, "disabled": 2, "draft": 0, "deleted": 3}
+    if status and status.lower() != "all":
+        mapped_status = status_map.get(status.lower())
+        if mapped_status is not None:  # Check for None to handle status 0 (draft)
+            query["status"] = mapped_status
+    elif statuses:
+        valid_statuses = [status_map.get(s.lower()) for s in statuses if s.lower() in status_map]
+        if valid_statuses:
+            query["status"] = {"$in": valid_statuses}
+
+    # Date range filter
+    if date_from:
+        try:
+            query["created_at"] = {"$gte": datetime.fromisoformat(date_from.replace("Z", "+00:00"))}
+        except ValueError:
+            raise HTTPException(400, "Invalid date_from format")
+    if date_to:
+        try:
+            if "created_at" not in query:
+                query["created_at"] = {}
+            query["created_at"]["$lte"] = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, "Invalid date_to format")
+
+    # Debug: Print the query to see what's being searched
+    print(f"MongoDB Query: {query}")
+
+    # Pagination
+    skip = (page - 1) * page_size
+    total = await db.Stores.count_documents(query)
+    
+    # Add sorting for consistent results
+    stores = await db.Stores.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(page_size).to_list(page_size)
+    
+    # Debug: Print results count
+    print(f"Total documents found: {total}")
+    print(f"Documents returned: {len(stores)}")
+
+    return StoresResponse(
+        data=stores,
+        total=total,
+        page=page,
+        page_size=page_size
+    )# async def create_store(data: CreateStoreModel) -> str:
 #     doc = data.model_dump()
 #     if await db.Stores.find_one({"store_id": doc["store_id"]}):
 #         doc["store_id"] = await _next_id(db.Stores, "store_id", "ST")
@@ -512,7 +583,33 @@ async def delete_subcategory_from_category(category_id: str, sub_category_id: st
 #         raise RuntimeError(f"Failed to send credentials: {str(e)}")
 
 # ───────────────────────── HELP
-async def submit_help(data: HelpModel) -> str:
-    doc = data.model_dump() | {"submitted_at": datetime.utcnow().isoformat()}
+async def submit_help(data: HelpModel, user) -> str:
+    doc = data.model_dump()
+    doc["submitted_at"] = datetime.now().isoformat()
+
+    # Automatically add requested_by from middleware user
+    doc["requested_by"] = {
+        "id": str(user["id"]),
+        "email": str(user["email"]),
+        "role": str(user["role"]),
+    }
+
     saved = await db.Help.insert_one(doc)
     return str(saved.inserted_id)
+ # get all requests help 
+async def get_all_help():
+    cursor = db.Help.find({})
+    results = []
+    async for doc in cursor:
+        doc["id"] = str(doc["_id"])  # convert ObjectId to string
+        doc.pop("_id", None)
+        results.append(doc)
+    return results
+# get by id 
+async def get_help_by_id(ticket_id: str):
+    doc = await db.Help.find_one({"_id": ObjectId(ticket_id)})
+    if doc is None:
+        return None
+    doc["id"] = str(doc["_id"])
+    doc.pop("_id", None)
+    return doc
