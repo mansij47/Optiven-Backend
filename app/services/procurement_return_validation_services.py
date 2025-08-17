@@ -27,7 +27,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
     is_seller_returnable = return_order.get("is_seller_returnable", False)
 
     # ✅ CASE 1: Product Damage & Seller Returnable → ReturnToVendor
-    if reason == "Product Damage" and is_seller_returnable:
+    if reason == "Damage on arrival" and not is_seller_returnable:
         await return_to_vendor_collection.insert_one({
             "return_id": return_order["return_id"],
             "order_id": return_order["order_id"],
@@ -51,7 +51,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
         action = "Added to ReturnToVendor"
 
     # ✅ CASE 2: Product Damage & NOT Seller Returnable → LossOrders
-    elif reason == "Product Damage" and not is_seller_returnable:
+    elif reason == "Damage on arrival" and is_seller_returnable:
         await loss_orders_collection.insert_one({
             "product_id": product["product_id"],
             "org_id": org_id,
