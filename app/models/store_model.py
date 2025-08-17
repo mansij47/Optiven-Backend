@@ -68,3 +68,9 @@ class StaffInput(BaseModel):
     joining_date: str
     termination_date: Optional[str] = ""
     status: int
+    
+class StoresResponse(BaseModel):
+    data: List[dict]
+    total: int
+    page: int
+    page_size: int
