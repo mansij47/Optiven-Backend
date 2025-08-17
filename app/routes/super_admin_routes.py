@@ -2,6 +2,7 @@ from typing import List, Optional
 from app.models.store_model import StoresResponse
 from fastapi import APIRouter, HTTPException, Query, Request
 
+
 from app.models.super_admin_models import (
     SignupModel, LoginModel, StoreIdsModel, StoreUpdate, UpdateProfileModel, ChangePasswordModel,
     CreateStoreModel, EditStoreModel, UpdateStoreStatusModel,
@@ -262,6 +263,18 @@ async def remove_subcategory(category_id: str, sub_category_id: str):
 
 # ── HELP ──────────────────────────────────
 @router.post("/help")
-async def submit_help(help_data: HelpModel):
-    ticket = await svc.submit_help(help_data)
-    return {"message": "Help ticket created", "ticket_id": ticket}
+async def create_help_ticket(data: HelpModel, request: Request):
+    user = request.state.user  # Get the user from middleware
+    ticket_id = await svc.submit_help(data, user=user)
+    return {"message": "Help ticket created", "ticket_id": ticket_id}
+
+@router.get("/allHelp")
+async def get_all_help_tickets():
+    return await svc.get_all_help()
+
+@router.get("/help/{ticket_id}")
+async def get_help_ticket(ticket_id: str):
+    ticket = await svc.get_help_by_id(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Help ticket not found")
+    return ticket

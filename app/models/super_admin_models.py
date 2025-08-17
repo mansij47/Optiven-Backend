@@ -297,7 +297,7 @@ class StoreInvitationModel(BaseModel):
 #  F. HELP  (Help collection)
 # ──────────────────────────────────────────
 class HelpModel(BaseModel):
-    requested_by: dict                        # {"role": str, "id": str}
+    requested_by: Optional[dict] = None                        # {"role": str, "id": str}
     title: str
     message: str
     submitted_at: Optional[str] = None
