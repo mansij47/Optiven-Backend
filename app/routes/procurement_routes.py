@@ -221,7 +221,7 @@ async def validate_return_order_route(
 ):
     user = request.state.user
 
-    if user.get("role") not in ["procurement","sales"]:
+    if not user or user.get("role") not in ["admin","procurement", "sales"]:       
         raise HTTPException(status_code=403, detail="Only procurement users allowed.")
 
     store_id = user.get("store_id")

@@ -20,7 +20,7 @@ async def generate_order_id():
     return f"ORD{new_number:03d}"
 
 def build_product_detail(inventory_item: dict, product_id: str, unit_price: float,
-                         product_tax: float, order_quantity: int, inventory_quantity: int):
+                         product_tax: float, order_quantity: int, inventory_quantity: int, consumer_return_conditions: list):
     line_total = unit_price * order_quantity
     tax = product_tax * order_quantity
 
@@ -32,8 +32,8 @@ def build_product_detail(inventory_item: dict, product_id: str, unit_price: floa
         "order_quantity": order_quantity,
         "inventory_quantity": inventory_quantity,
         "tax": product_tax,
-         "unit": inventory_item.get("unit", "")  # ✅ added this line to fetch 'unit
-    }
+        "unit": inventory_item.get("unit", ""),
+        "consumer_return_conditions": consumer_return_conditions}
 
     return product_detail, line_total + tax
 
@@ -108,12 +108,14 @@ async def fetch_inventory_details(product_id: str, store_id: str):
         product_tax = 0
 
     inventory_quantity = int(inventory_item.get("quantity", 0)) if inventory_item else 0
+    consumer_return_conditions = inventory_item.get("consumer_return_conditions", [])
 
     return {
         "inventory_item": inventory_item,
         "unit_price": unit_price,
         "product_tax": product_tax,
-        "inventory_quantity": inventory_quantity
+        "inventory_quantity": inventory_quantity,
+        "consumer_return_conditions": consumer_return_conditions
     }
 
 # --- Helper function to generate new return_id ---
