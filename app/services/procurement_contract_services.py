@@ -132,7 +132,10 @@ async def get_contracts_by_request_id(request_id: str, store_id: str):
     ).to_list(length=None)
 
     if not contracts:
-        raise HTTPException(status_code=404, detail="No contracts found for this request.")
+        return {
+            "contracts": [],
+            "message": "No contracts found for this request."
+        }
 
     return {"contracts": contracts}
 
