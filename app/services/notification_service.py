@@ -91,11 +91,17 @@ async def get_all_notifications(user: dict, status: Optional[int] = None):
 
     user_id = str(user["id"])
     email = user.get("email")
+    store_id = user.get("store_id")  # Retrieve the store_id from the user object
+
     # Show notifications where receiver.id or receiver.email matches the current user
     query["$or"] = [
         {"receiver.id": user_id},
         {"receiver.email": email}
     ]
+    
+    # Add store_id filtering to the query
+    if store_id:
+        query["receiver.store_id"] = store_id
 
     notifications = await notifications_collection.find(query).sort([
         ("date", -1),
@@ -106,6 +112,7 @@ async def get_all_notifications(user: dict, status: Optional[int] = None):
         notif["_id"] = str(notif["_id"])  # Convert ObjectId to string
 
     return notifications
+
 
 
     
