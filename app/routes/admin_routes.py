@@ -105,7 +105,7 @@ async def send_notification(
         model,
         admin=admin,
         sales=sales,
-        procurement=procurement
+        procurement=procurement  
        
     )
 
@@ -417,11 +417,33 @@ async def raise_order_request_api(data: NewRaiseOrderRequest, request: Request):
 
     requested_by = {
         "role": user.get("role"),
-        "id": user.get("user_id", "unknown")
+        "id": user.get("user_id", "unknown"),
+        "store_id": store_id
     }
 
+    # ✅ First process the order request
     response = await raise_order_request_service(data.dict(), org_id, store_id, requested_by)
-    return response
+
+    # ✅ Then create a notification for procurement
+    from app.models.notification_model import UserInfo, NotificationBase  # adjust import paths as needed
+
+    notification = NotificationBase(
+        sender=UserInfo(**requested_by),
+        type_of_notification="Order Request",
+        title="New Procurement Request Raised",
+        message=f"Admin has raised a new procurement request.",
+    )
+
+    notification_response = await create_notification(
+        notification=notification,
+        procurement=True  # 👈 send only to procurement
+    )
+
+    return {
+        "order_request": response,
+        "notification": notification_response
+    }
+
 
 @router.post("/orders/received/add")
 async def add_order(order: SalesOrderModel, request: Request):

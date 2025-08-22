@@ -38,6 +38,12 @@ from app.services import procurement_setup_services
 
 from app.services.procurement_dashboard_service import get_procurement_dashboard_data
 from app.models.procurement_models import ProcurementDashboardResponse
+from app.services.notification_service import (
+    create_notification,   
+    get_all_notifications,
+    update_notification_by_id,
+    delete_notification_by_id
+)
 
 router = APIRouter()
 
@@ -104,9 +110,33 @@ async def update_contract_status_route(
         raise HTTPException(status_code=403, detail="Only procurement users are allowed.")
 
     store_id = user.get("store_id")
-    return await procurement_contract_services.update_contract_status(
+
+    # ✅ Update contract status first
+    result = await procurement_contract_services.update_contract_status(
         status_update.contract_id, store_id, status_update.action
     )
+
+    # ✅ Then create notification for Sales & Procurement
+    from app.models.notification_model import UserInfo, NotificationBase  # adjust import path as per your project
+
+    notification = NotificationBase(
+        sender=UserInfo(
+            role=user.get("role"),
+            id=user.get("user_id", "unknown"),
+            store_id=store_id
+        ),
+        type_of_notification="Contract Update",
+        title="Contract Status Updated",
+        message=f"Contract has been {status_update.action} by Procurement."
+    )
+
+    notification_response = await create_notification(
+        notification=notification,
+        sales=True,         # 👈 notify Sales
+        admin=True    # 👈 also notify Procurement
+    )
+
+
 
 
 #List of Contracts
@@ -221,7 +251,7 @@ async def validate_return_order_route(
 ):
     user = request.state.user
 
-    if user.get("role") != "procurement":
+    if not user or user.get("role") not in ["admin","procurement", "sales"]:       
         raise HTTPException(status_code=403, detail="Only procurement users allowed.")
 
     store_id = user.get("store_id")

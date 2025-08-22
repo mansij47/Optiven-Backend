@@ -280,6 +280,7 @@ async def get_product_details_service(store_id: str, product_id: Optional[str] =
         query["product_name"] = product_name
 
     product = await db.Inventory.find_one(query, {"_id": 0})
+    print(product.get("consumer_return_conditions", "No specific conditions"))
 
     if not product:
         raise HTTPException(status_code=404, detail="Product not found for this store")
@@ -292,7 +293,8 @@ async def get_product_details_service(store_id: str, product_id: Optional[str] =
         quantity_available=product.get("quantity", 0),
         unit=product.get("unit", "pcs"),
         store_id=product.get("store_id"),
-        tax=product.get("tax", 0)
+        tax=product.get("tax", 0),
+        consumer_return_conditions=product.get("consumer_return_conditions", "No specific conditions")
     )
 
 async def get_sales_order_by_id(order_id: str, store_id: str):

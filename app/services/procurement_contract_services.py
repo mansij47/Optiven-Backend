@@ -94,13 +94,15 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
                 "expected_quantity": contract.get("quantity", 0),
                 "quantity_unit": contract.get("unit", "pcs"),
                 "is_product_damaged": False,
-                "returnable": contract.get("is_seller_returnable", True),
-                "return_conditions": contract.get("seller_return_conditions", []),
+                "returnable": contract.get("returnable", True),
+                "return_conditions": contract.get("return_conditions", []),
                 "is_consumer_returnable": contract.get("is_consumer_returnable", True),
                 "consumer_return_conditions": contract.get("consumer_return_conditions", []),
                 "unit": contract.get("unit", "pcs"),
                 "category": contract.get("category", "misc"),
                 "sub_category": contract.get("sub_category", "misc"),
+                "quantity": contract.get("quantity"),
+                "unit_price": contract.get("unit_price"),
 
             }
             await purchase_orders_collection.insert_one(purchase_order)
@@ -130,7 +132,10 @@ async def get_contracts_by_request_id(request_id: str, store_id: str):
     ).to_list(length=None)
 
     if not contracts:
-        raise HTTPException(status_code=404, detail="No contracts found for this request.")
+        return {
+            "contracts": [],
+            "message": "No contracts found for this request."
+        }
 
     return {"contracts": contracts}
 

@@ -145,6 +145,9 @@ class PurchaseOrderResponse(BaseModel):
     product_name: Optional[str] = None
     category: Optional[str] = None
     unit: Optional[str] = None
+    quantity: Optional[int] = None
+    unit_price: Optional[float] = None
+    return_conditions: Optional[List[str]] = None
 
 
 

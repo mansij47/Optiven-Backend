@@ -4,7 +4,6 @@ from fastapi import HTTPException
 from app.models.sales_model import ReturnOrderRequest, SendToProcurement
 from app.utils.sales_utils import enrich_products, fetch_inventory_details, generate_customer_id, generate_order_id, build_product_detail, generate_request_id, generate_return_id
 
-
 async def add_sales_order(order_data: dict, store_id: str):
     # Generate customer_id
     customer_id = await generate_customer_id()
@@ -12,6 +11,7 @@ async def add_sales_order(order_data: dict, store_id: str):
     # Process products
     final_products, subtotal = await process_products(order_data.get("products", []), store_id)
 
+    print(f"Final products: {final_products}")
     # Fill order fields
     order_data["products"] = final_products
     order_data["total_order_price"] = round(subtotal, 2)
@@ -20,9 +20,17 @@ async def add_sales_order(order_data: dict, store_id: str):
     order_data["order_status"] = "0"
     order_data["store_id"] = store_id
 
+    # Fix: Collect return conditions from all products
+    order_data["consumer_return_conditions"] = [
+        condition
+        for product in final_products
+        for condition in product.get("consumer_return_conditions", [])
+    ]
+
     # Insert into SalesOrders
     await db.SalesOrders.insert_one(order_data)
     return order_data["order_id"]
+
 
 async def process_products(products: list, store_id: str):
     final_products = []
@@ -40,7 +48,8 @@ async def process_products(products: list, store_id: str):
             unit_price=inventory_data["unit_price"],
             product_tax=inventory_data["product_tax"],
             order_quantity=order_quantity,
-            inventory_quantity=inventory_data["inventory_quantity"]
+            inventory_quantity=inventory_data["inventory_quantity"],
+            consumer_return_conditions=inventory_data["consumer_return_conditions"]
         )
 
         subtotal += total_with_tax
