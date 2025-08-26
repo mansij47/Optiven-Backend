@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from app.db import db
-from app.models.procurement_models import PurchaseOrderResponse
+from app.models.procurement_models import PurchaseOrderResponse, PurchaseOrderDetailResponse
 
 purchase_orders_collection = db["PurchaseOrders"]
 
@@ -32,6 +32,34 @@ async def get_all_purchase_orders(store_id: str):
 
         result.append(PurchaseOrderResponse(**order))
     return result
+
+async def get_purchase_order_by_id(order_id: str, store_id: str):
+    order = await purchase_orders_collection.find_one(
+        {"order_id": order_id, "store_id": store_id}, {"_id": 0}
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Purchase Order not found")
+
+    # received_status normalize
+    raw_received = order.get("received_status", 0)
+    if isinstance(raw_received, int):
+        order["received_status"] = RECEIVED_MAP.get(raw_received, "Waiting")
+    elif isinstance(raw_received, str):
+        order["received_status"] = raw_received
+    else:
+        order["received_status"] = "Waiting"
+
+    # validation_status normalize
+    raw_validation = order.get("validation_status", 0)
+    if isinstance(raw_validation, int):
+        order["validation_status"] = VALIDATION_MAP.get(raw_validation, "Pending")
+    elif isinstance(raw_validation, str):
+        order["validation_status"] = raw_validation
+    else:
+        order["validation_status"] = "Pending"
+
+    return PurchaseOrderDetailResponse(**order)
+
 
 
 async def mark_purchase_order_as_received(order_id: str) -> dict:
