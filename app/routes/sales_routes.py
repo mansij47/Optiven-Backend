@@ -110,8 +110,8 @@ async def mark_order_as_sold(order_id: str, request: Request):
 async def delete_order(order_id: str, request: Request):
     user = request.state.user
 
-    if not user or user.get("role") != "sales":
-        raise HTTPException(status_code=403, detail="Forbidden: Sales access required.")
+    if not user or user.get("role") != "sales" and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
 
     store_id = user.get("store_id")
     if not store_id:
