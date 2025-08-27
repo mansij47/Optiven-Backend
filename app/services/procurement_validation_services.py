@@ -3,6 +3,8 @@ from fastapi import HTTPException
 from bson import ObjectId
 from app.db import db
 from app.models.procurement_models import PurchaseOrderValidationInput, PurchaseOrderValidationRequest, PurchaseOrderSubmitRequest
+import uuid
+from datetime import datetime
 
 async def validate_purchase_order_preview(
     data: PurchaseOrderValidationInput, store_id: str, org_id: str
@@ -70,7 +72,7 @@ async def _run_validation_logic(data: PurchaseOrderValidationRequest, store_id: 
             else:
                 raise HTTPException(
                     status_code=400,
-                    detail="Undamaged product aur returnable false hone par ReturnToVendor nahi ho sakta."
+                    detail="If the product is Undamaged and Not Returnable, so it cannot be sent to the Vendor."
                 )
 
         elif data.selected_action in [None, "Inventory"]:
@@ -85,7 +87,7 @@ async def _run_validation_logic(data: PurchaseOrderValidationRequest, store_id: 
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid selected_action `{data.selected_action}` for undamaged product."
+                detail="Product is not damaged, so it cannot be sent to LossOrders."
             )
 
     # ✅ Case 2: Damaged + returnable
@@ -101,7 +103,7 @@ async def _run_validation_logic(data: PurchaseOrderValidationRequest, store_id: 
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid selected_action `{data.selected_action}` for damaged + returnable product."
+                detail="Invalid selected action for Damaged product and Returnable product"
             )
 
     # ✅ Case 3: Damaged + not returnable
@@ -117,14 +119,13 @@ async def _run_validation_logic(data: PurchaseOrderValidationRequest, store_id: 
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid selected_action `{data.selected_action}` for damaged + non-returnable product."
+                detail="Invalid selected action for Damaged product and Not Returnable product."
             )
 
     raise HTTPException(status_code=400, detail="Invalid payload / condition match nahi hui.")
 
 
-import uuid
-from datetime import datetime
+
 
 def generate_id(prefix: str) -> str:
     return f"{prefix}{uuid.uuid4().hex[:6].upper()}"
