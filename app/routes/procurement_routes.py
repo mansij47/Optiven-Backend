@@ -4,6 +4,7 @@ from typing import Dict
 
 from jose import JWTError
 from pydantic import ValidationError
+from bson  import ObjectId
 
 from app.models.procurement_models import Contract,ContractUpdate, ContractStatusUpdate, RequestedOrder, RequestedOrderUpdate
 
@@ -46,6 +47,8 @@ from app.services.notification_service import (
 )
 from app.services.procurement_delete_service import return_to_vendor_services
 # from app.services.procurement_delete_service import sales_order_services
+from app.models.procurement_models import VendorModel,VendorUpdate
+from app.services import vendor_service as svc
 
 router = APIRouter()
 
@@ -53,8 +56,75 @@ router = APIRouter()
 def root():
     return {"message": "Welcome to Optiven Procurement APIs"}
 
+#vendor collection
 
-#delete api
+# CREATE
+@router.post("/vendors")
+async def create_vendor(vendor: VendorModel, request: Request):
+    user = request.state.user
+    if not user or user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    vendor_id = await svc.create_vendor(vendor, request)
+    return {"message": "Vendor created successfully", "vendor_id": vendor_id}
+
+# READ ALL
+@router.get("/vendors")
+async def get_vendors(request: Request):
+    user = request.state.user
+    if not user or user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    return await svc.get_all_vendors(request)
+
+# READ ONE (BY UUID)
+@router.get("/vendors/{vendor_id}")
+async def get_vendor(vendor_id: str, request: Request):
+    user = request.state.user
+    if not user or user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    vendor = await svc.get_vendor_by_id(vendor_id, request)
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    return vendor
+
+# UPDATE (BY UUID)
+@router.patch("/vendors/{vendor_id}")
+async def update_vendor(vendor_id: str, vendor: VendorUpdate, request: Request):
+    user = request.state.user
+    if not user or user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    updated_count = await svc.update_vendor(vendor_id, vendor.dict(exclude_unset=True), request)
+    if updated_count == 0:
+        raise HTTPException(status_code=404, detail="Vendor not found or no changes made")
+    return {"message": "Vendor updated successfully"}
+
+# DELETE (BY UUID)
+@router.delete("/vendors/{vendor_id}")
+async def delete_vendor(vendor_id: str, request: Request):
+    user = request.state.user
+    if not user or user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    deleted_count = await svc.delete_vendor(vendor_id, request)
+    if deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    return {"message": "Vendor deleted successfully"}
+# delete by objectID  for vendor (optional)
+# DELETE
+# @router.delete("/{vendor_id}")
+# async def delete_vendor(vendor_id: str, request: Request):
+#     user = request.state.user
+#     if not user or user.get("role") != "admin":
+#         raise HTTPException(status_code=403, detail="Unauthorized")
+
+#     deleted_count = await svc.delete_vendor(vendor_id)
+#     if deleted_count == 0:
+#         raise HTTPException(status_code=404, detail="Vendor not found")
+#     return {"message": "Vendor deleted successfully"}
+#delete api (common)
 @router.delete("/return-to-vendor/{id}")
 async def delete_return_to_vendor(id: str, request: Request):
     user = request.state.user
