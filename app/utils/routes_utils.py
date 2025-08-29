@@ -1,11 +1,10 @@
-delete by objectId of vendor
-async def delete_vendor(vendor_id: str):
-    result = await VENDOR_COLLECTION.delete_one({"_id": ObjectId(vendor_id)})
-    return result.deleted_count
-    result = await VENDOR_COLLECTION.delete_one({"_id": ObjectId(vendor_id)})
-    return result.deleted_count
+from fastapi import APIRouter, HTTPException, Request
+from app.services import vendor_service as svc
+from app.utils.service_utils import return_to_vendor_services, sales_order_services
 
-delete by objectID  for vendor (optional)
+router = APIRouter()
+
+# delete by objectID  for vendor (optional)
 @router.delete("/{vendor_id}")
 async def delete_vendor(vendor_id: str, request: Request):
     user = request.state.user
@@ -17,7 +16,7 @@ async def delete_vendor(vendor_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Vendor not found")
     return {"message": "Vendor deleted successfully"}
 
-delete api (common)
+# delete api (common)
 @router.delete("/return-to-vendor/{id}")
 async def delete_return_to_vendor(id: str, request: Request):
     user = request.state.user
