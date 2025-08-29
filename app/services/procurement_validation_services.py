@@ -1,88 +1,300 @@
-from datetime import datetime
+# services/procurement_validation_services.py
+from fastapi import HTTPException
 from bson import ObjectId
 from app.db import db
+from app.models.procurement_models import PurchaseOrderValidationInput, PurchaseOrderValidationRequest, PurchaseOrderSubmitRequest
 import uuid
+from datetime import datetime
 
-inventory_collection = db["Inventory"]
-loss_orders_collection = db["LossOrders"]
-return_to_vendor_collection = db["ReturnToVendor"]
-purchase_orders_collection = db["PurchaseOrders"]
+async def validate_purchase_order_preview(
+    data: PurchaseOrderValidationInput, store_id: str, org_id: str
+):
+    """
+    Frontend se sirf 4-5 fields aati hain.
+    Baaki details DB se order_id ke base par fetch hoke merge hoti hain.
+    """
 
-async def validate_purchase_order(data, store_id: str, org_id: str):
-    
-    uuid_str = str(uuid.uuid4())
-    # Add to Inventory
-    if ((data.received_quantity == data.expected_quantity) or (data.received_quantity != data.expected_quantity)) and not data.is_product_damaged:
-        inventory_data = {
-            "product_id": uuid_str,
+  
+    order = await db["PurchaseOrders"].find_one({"order_id": data.order_id})
+    if not order:
+        raise HTTPException(status_code=404, detail="Purchase order not found.")
+
+    # 🔹 Merge karo (DB details + frontend input)
+    merged_data = {
+        "order_id": str(order["_id"]),
+        "contract_id": order.get("contract_id"),
+        "delivery_date": order.get("delivery_date"),
+        "vendor_name": order.get("vendor_name"),
+        "expected_quantity": data.expected_quantity,
+        "received_quantity": data.received_quantity,
+        "unit": order.get("unit"),
+        "is_product_damaged": data.is_product_damaged,
+        "returnable": order.get("returnable"),
+        "return_conditions": order.get("return_conditions", []),
+        "is_consumer_returnable": order.get("is_consumer_returnable", False),
+        "consumer_return_conditions": order.get("consumer_return_conditions", []),
+        "unit_price": order.get("unit_price"),
+        "category": order.get("category"),
+        "product_name": order.get("product_name"),
+        "sub_category": order.get("sub_category"),
+        "has_warranty": order.get("has_warranty", False),
+        "warranty_tenure": order.get("warranty_tenure", 0),
+        "warranty_unit": order.get("warranty_unit", "months"),
+        "tax": order.get("tax", 0),
+        "product_id": order.get("product_id"),
+        "selected_action": data.selected_action,
+    }
+
+    # Pydantic model banake validate karo
+    full_request = PurchaseOrderValidationRequest(**merged_data)
+
+    # 👇 Tera pura decision logic call
+    return await _run_validation_logic(full_request, store_id, org_id)
+
+
+async def _run_validation_logic(data: PurchaseOrderValidationRequest, store_id: str, org_id: str):
+    """
+    Yeh wahi tera pura decision logic hai jo tu already likh chuka hai
+    (damaged / returnable / inventory / loss logic).
+    """
+
+    # ✅ Case 1: Agar product damaged nahi hai
+    if not data.is_product_damaged:
+        if data.selected_action == "ReturnToVendor":
+            if data.returnable:
+                return {
+                    "message": "♻️ Product undamaged hai par returnable true hai, ReturnToVendor me jayega.",
+                    "collection": "ReturnToVendor",
+                    "payload": data.dict(),
+                    "store_id": store_id,
+                    "org_id": org_id
+                }
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="If the product is Undamaged and Not Returnable, so it cannot be sent to the Vendor."
+                )
+
+        elif data.selected_action in [None, "Inventory"]:
+            return {
+                "message": "✅ Product undamaged hai, Inventory me jayega.",
+                "collection": "Inventory",
+                "payload": data.dict(),
+                "store_id": store_id,
+                "org_id": org_id
+            }
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Product is not damaged, so it cannot be sent to LossOrders."
+            )
+
+    # ✅ Case 2: Damaged + returnable
+    if data.is_product_damaged and data.returnable:
+        if data.selected_action in [None, "ReturnToVendor"]:
+            return {
+                "message": "♻️ Product damaged hai aur returnable true hai, ReturnToVendor me jayega.",
+                "collection": "ReturnToVendor",
+                "payload": data.dict(),
+                "store_id": store_id,
+                "org_id": org_id
+            }
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid selected action for Damaged product and Returnable product"
+            )
+
+    # ✅ Case 3: Damaged + not returnable
+    if data.is_product_damaged and not data.returnable:
+        if data.selected_action in [None, "LossOrders"]:
+            return {
+                "message": "❌ Product damaged hai aur returnable false hai, LossOrders me jayega.",
+                "collection": "LossOrders",
+                "payload": data.dict(),
+                "store_id": store_id,
+                "org_id": org_id
+            }
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid selected action for Damaged product and Not Returnable product."
+            )
+
+    raise HTTPException(status_code=400, detail="Invalid payload / condition match nahi hui.")
+
+
+
+
+# def generate_id(prefix: str) -> str:
+#     return f"{prefix}{uuid.uuid4().hex[:6].upper()}"
+
+# async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str, org_id: str):
+#     base_order = await db["PurchaseOrders"].find_one({"order_id": data.order_id})
+#     if not base_order:
+#         raise HTTPException(status_code=404, detail="Order not found")
+
+#     # --- INVENTORY CASE ---
+#     if data.selected_action == "Inventory":
+#         final_doc = {
+#             "product_id": generate_id("PRD"),
+#             "org_id": org_id,
+#             "store_id": store_id,
+#             "product_name": base_order.get("product_name"),
+#             "is_consumer_returnable": data.is_consumer_returnable,
+#             "consumer_return_conditions": data.consumer_return_conditions,
+#             "is_seller_returnable": base_order.get("returnable", False),
+#             "seller_return_conditions": base_order.get("return_conditions", []),
+#             "unit_price": str(base_order.get("unit_price", "0")),
+#             "unit": base_order.get("unit"),
+#             "quantity": data.received_quantity,
+#             "category": base_order.get("category"),
+#             "sub_category": base_order.get("sub_category", ""),
+#             "tags": [],
+#             "tax": float(base_order.get("tax", 0)),
+#             "has_warranty": base_order.get("has_warranty", False),
+#             "warranty_tenure": base_order.get("warranty_tenure", 0),
+#             "warranty_unit": base_order.get("warranty_unit", "months"),
+#             "last_updated": str(datetime.now()),
+#             "status": "active",
+#         }
+#         target_collection = db["Inventory"]
+
+#     # --- LOSS ORDERS CASE ---
+#     elif data.selected_action == "LossOrders":
+#         final_doc = {
+#             "product_id": generate_id("PRD"),
+#             "org_id": org_id,
+#             "store_id": store_id,
+#             "product_name": base_order.get("product_name"),
+#             "category": base_order.get("category"),
+#             "date_reported": str(datetime.now().date()),
+#             "quantity_lost": data.received_quantity,
+#             "unit": base_order.get("unit"),
+#             "unit_price": str(base_order.get("unit_price", "0")),
+#             "reason": "Damaged & Not Returnable",
+#         }
+#         target_collection = db["LossOrders"]
+
+#     # --- RETURN TO VENDOR CASE ---
+#     elif data.selected_action == "ReturnToVendor":
+#         final_doc = {
+#             "return_id": generate_id("RTV"),
+#             "order_id": data.order_id,
+#             "vendor_name": base_order.get("vendor_name"),
+#             "product_name": base_order.get("product_name"),
+#             "delivery_date": base_order.get("delivery_date"),
+#             "status": 1,
+#             "return_amount": str(data.received_quantity * float(base_order.get("unit_price", 0))),
+#             "original_quantity": data.expected_quantity,
+#             "return_quantity": data.received_quantity,
+#             "unit": base_order.get("unit"),
+#             "contract_id": base_order.get("contract_id"),
+#             "purchase_date": str(datetime.now().date()),
+#             "product_condition": "Damaged",
+#             "total_price": int(data.received_quantity * float(base_order.get("unit_price", 0))),
+#             "unit_price": int(base_order.get("unit_price", 0)),
+#             "return_reason": "Damaged on Delivery",
+#             "store_id": store_id,
+#             "org_id": org_id,
+#         }
+#         target_collection = db["ReturnToVendor"]
+
+#     else:
+#         raise HTTPException(status_code=400, detail="Invalid selected_action")
+
+#     # Insert document
+#     result = await target_collection.insert_one(final_doc)
+#     final_doc["_id"] = str(result.inserted_id)
+#     return final_doc
+
+
+def generate_id(prefix: str) -> str:
+    return f"{prefix}{uuid.uuid4().hex[:6].upper()}"
+
+async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str, org_id: str):
+    base_order = await db["PurchaseOrders"].find_one({"order_id": data.order_id})
+    if not base_order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # --- INVENTORY CASE ---
+    if data.selected_action == "Inventory":
+        final_doc = {
+            "product_id": generate_id("PRD"),
             "org_id": org_id,
             "store_id": store_id,
-            "product_name": data.product_name,
+            "product_name": base_order.get("product_name"),
             "is_consumer_returnable": data.is_consumer_returnable,
-            "consumer_return_conditions": data.consumer_return_conditions or [],
-            "is_seller_returnable": data.returnable,
-            "seller_return_conditions": data.return_conditions or [],
-            "unit_price": str(data.unit_price),
-            "quantity": str(data.received_quantity),
-            "category": data.category,
-            "sub_category": data.sub_category or "misc",
+            "consumer_return_conditions": data.consumer_return_conditions,
+            "is_seller_returnable": base_order.get("returnable", False),
+            "seller_return_conditions": base_order.get("return_conditions", []),
+            "unit_price": str(base_order.get("unit_price", "0")),
+            "unit": base_order.get("unit"),
+            "quantity": data.received_quantity,
+            "category": base_order.get("category"),
+            "sub_category": base_order.get("sub_category", ""),
             "tags": [],
-            "tax": data.tax,
-            "has_warranty": data.has_warranty,
-            "warranty_tenure": data.warranty_tenure,
-            "warranty_unit": data.warranty_unit,
-            "unit": data.unit,
-            "last_updated": datetime.utcnow().isoformat(),
+            "tax": float(base_order.get("tax", 0)),
+            "has_warranty": base_order.get("has_warranty", False),
+            "warranty_tenure": base_order.get("warranty_tenure", 0),
+            "warranty_unit": base_order.get("warranty_unit", "months"),
+            "last_updated": str(datetime.now()),
+            "status": "active",
         }
-        await inventory_collection.insert_one(inventory_data)
+        target_collection = db["Inventory"]
 
-
-
-    elif data.is_product_damaged and not data.returnable:
-        loss_data = {
-            "product_id": data.product_id or f"P{ObjectId()}"[:6],
+    # --- LOSS ORDERS CASE ---
+    elif data.selected_action == "LossOrders":
+        final_doc = {
+            "product_id": generate_id("PRD"),
             "org_id": org_id,
             "store_id": store_id,
-            "product_name": data.product_name,
-            "category": data.category,
-            "date_reported": datetime.utcnow().strftime("%Y-%m-%d"),
-            "quantity_lost": data.expected_quantity - data.received_quantity,
-            "unit": data.unit,
-            "unit_price": str(data.unit_price),
-            "reason": "Damaged and not returnable",
+            "product_name": base_order.get("product_name"),
+            "category": base_order.get("category"),
+            "date_reported": str(datetime.now().date()),
+            "quantity_lost": data.received_quantity,
+            "unit": base_order.get("unit"),
+            "unit_price": str(base_order.get("unit_price", "0")),
+            "reason": "Damaged & Not Returnable",
         }
-        await loss_orders_collection.insert_one(loss_data)
-    # Return to Vendor
-    elif (data.received_quantity != data.expected_quantity) or (data.is_product_damaged and data.returnable):
-        return_data = {
-            "store_id": store_id,
-            "org_id": org_id,
-            "return_id": f"RV{ObjectId()}"[:6],
+        target_collection = db["LossOrders"]
+
+    # --- RETURN TO VENDOR CASE ---
+    elif data.selected_action == "ReturnToVendor":
+        final_doc = {
+            "return_id": generate_id("RTV"),
             "order_id": data.order_id,
-            "vendor_name": data.vendor_name,
-            "product_name": data.product_name,
-            "delivery_date": data.delivery_date,
-            "status": "0",
-            "return_amount": str(data.unit_price * (data.expected_quantity - data.received_quantity)),
+            "vendor_name": base_order.get("vendor_name"),
+            "product_name": base_order.get("product_name"),
+            "delivery_date": base_order.get("delivery_date"),
+            "status": 1,
+            "return_amount": str(data.received_quantity * float(base_order.get("unit_price", 0))),
             "original_quantity": data.expected_quantity,
-            "return_quantity": data.expected_quantity - data.received_quantity,
-            "unit": data.unit,
-            "contract_id": data.contract_id,
-            "purchase_date": datetime.utcnow().strftime("%Y-%m-%d"),
-            "product_condition": "Damaged and returnable",
-            "total_price": data.unit_price * data.expected_quantity,
-            "unit_price": data.unit_price,
-            "return_reason": ", ".join(data.return_conditions or ["Mismatch or damaged"])
+            "return_quantity": data.received_quantity,
+            "unit": base_order.get("unit"),
+            "contract_id": base_order.get("contract_id"),
+            "purchase_date": str(datetime.now().date()),
+            "product_condition": "Damaged",
+            "total_price": int(data.received_quantity * float(base_order.get("unit_price", 0))),
+            "unit_price": int(base_order.get("unit_price", 0)),
+            "return_reason": "Damaged on Delivery",
+            "store_id": store_id,
+            "org_id": org_id,
         }
-        await return_to_vendor_collection.insert_one(return_data)
+        target_collection = db["ReturnToVendor"]
 
-    # Loss Orders
+    else:
+        raise HTTPException(status_code=400, detail="Invalid selected_action")
 
+    # Insert document into target collection
+    result = await target_collection.insert_one(final_doc)
+    final_doc["_id"] = str(result.inserted_id)
 
-    # Update validation status in purchase order
-    await purchase_orders_collection.update_one(
+    # --- Update PurchaseOrder validation_status to "completed" ---
+    await db["PurchaseOrders"].update_one(
         {"order_id": data.order_id},
-        {"$set": {"validation_status": "Completed", "received_status": "Received"}}
+        {"$set": {"validation_status": "Completed", "last_updated": str(datetime.now())}}
     )
 
-    return {"message": "Validation completed and data stored appropriately."}
+    return final_doc

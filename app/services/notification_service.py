@@ -81,9 +81,39 @@ async def create_notification(
     }
 
    
-async def get_all_notifications(user: dict, status: Optional[int] = None):
-    print("User:", user)
+# async def get_all_notifications(user: dict, status: Optional[int] = None):
+#     print("User:", user)
 
+#     query = {}
+
+#     if status is not None:
+#         query["status"] = status
+
+#     user_id = str(user["id"])
+#     email = user.get("email")
+#     store_id = user.get("store_id")  # Retrieve the store_id from the user object
+
+#     # Show notifications where receiver.id or receiver.email matches the current user
+#     query["$or"] = [
+#         {"receiver.id": user_id},
+#         {"receiver.email": email}
+#     ]
+    
+#     # Add store_id filtering to the query
+#     if store_id:
+#         query["receiver.store_id"] = store_id
+
+#     notifications = await notifications_collection.find(query).sort([
+#         ("date", -1),
+#         ("time", -1)
+#     ]).to_list(length=None)
+
+#     for notif in notifications:
+#         notif["_id"] = str(notif["_id"])  # Convert ObjectId to string
+
+#     return notifications
+
+async def get_all_notifications(user: dict, status: Optional[int] = None):
     query = {}
 
     if status is not None:
@@ -91,25 +121,31 @@ async def get_all_notifications(user: dict, status: Optional[int] = None):
 
     user_id = str(user["id"])
     email = user.get("email")
-    store_id = user.get("store_id")  # Retrieve the store_id from the user object
+    store_id = user.get("store_id")
 
-    # Show notifications where receiver.id or receiver.email matches the current user
-    query["$or"] = [
+    # OR conditions for receiver
+    or_conditions = [
         {"receiver.id": user_id},
         {"receiver.email": email}
     ]
-    
+
     # Add store_id filtering to the query
     if store_id:
-        query["receiver.store_id"] = store_id
+        or_conditions = [
+            {"receiver.id": user_id, "receiver.store_id": store_id},
+            {"receiver.email": email, "receiver.store_id": store_id}
+        ]
 
-    notifications = await notifications_collection.find(query).sort([
-        ("date", -1),
-        ("time", -1)
-    ]).to_list(length=None)
+    query["$or"] = or_conditions
 
+    # ✅ Sort by ObjectId descending (latest first)
+    notifications = await notifications_collection.find(query).sort(
+        [("_id", -1)]
+    ).to_list(length=None)
+
+    # Convert ObjectId to string
     for notif in notifications:
-        notif["_id"] = str(notif["_id"])  # Convert ObjectId to string
+        notif["_id"] = str(notif["_id"])
 
     return notifications
 

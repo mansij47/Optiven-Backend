@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import List,Optional
 from pydantic import BaseModel, EmailStr
 from pydantic import BaseModel, Field
@@ -173,6 +174,32 @@ class PurchaseOrderResponse(BaseModel):
     unit_price: Optional[float] = None
     return_conditions: Optional[List[str]] = None
 
+#Purchase Orders (Detail Response)
+class PurchaseOrderDetailResponse(BaseModel):
+    order_id: str
+    contract_id: str
+    vendor_name: Optional[str] = None
+    delivery_date: str
+    validation_status: str
+    received_status: str
+    product_name: Optional[str] = None
+    amount: Optional[int] = None
+    category: Optional[str] = None
+    sub_category: Optional[str] = None
+    unit: Optional[str] = None
+    quantity_unit: Optional[str] = None
+    expected_quantity: Optional[int] = None
+    received_quantity: Optional[int] = None
+    unit_price: Optional[float] = None
+    is_product_damaged: Optional[bool] = None
+    returnable: Optional[bool] = None
+    return_conditions: Optional[List[str]] = []
+    is_consumer_returnable: Optional[bool] = None
+    consumer_return_conditions: Optional[List[str]] = []
+    store_id: Optional[str] = None
+    org_id: Optional[str] = None
+
+
 
 
 #Delivery Status
@@ -180,29 +207,6 @@ class PurchaseOrderUpdateStatus(BaseModel):
     received_status: str    
 
 
-#PurchaseOrder Validation
-class PurchaseOrderValidationRequest(BaseModel):
-    order_id: str
-    contract_id: str
-    delivery_date: str
-    vendor_name: str
-    expected_quantity: int
-    received_quantity: int
-    unit: str
-    is_product_damaged: bool
-    returnable: bool
-    return_conditions: Optional[List[str]] = []
-    is_consumer_returnable: bool
-    consumer_return_conditions: Optional[List[str]] = []
-    unit_price: float
-    category: str
-    product_name: str
-    sub_category: Optional[str] = None
-    has_warranty: Optional[bool] = False
-    warranty_tenure: Optional[int] = 0
-    warranty_unit: Optional[str] = "months"
-    tax: Optional[int] = 0
-    product_id: Optional[str] = None
 
 
 #Return Orders From sales
@@ -309,3 +313,50 @@ class ProcurementDashboardResponse(BaseModel):
     monthly_data: List[MonthlyStats]
     supplier_contracts: List[SupplierContract]
     
+#purchase order validation and submission
+class TargetCollection(str, Enum):
+    inventory = "Inventory"
+    return_to_vendor = "ReturnToVendor"
+    loss = "LossOrders"
+
+
+class PurchaseOrderValidationRequest(BaseModel):
+    order_id: str
+    contract_id: str
+    delivery_date: str
+    vendor_name: str
+    expected_quantity: int
+    received_quantity: int
+    unit: str
+    is_product_damaged: bool
+    returnable: bool
+    return_conditions: Optional[List[str]] = []
+    is_consumer_returnable: bool
+    consumer_return_conditions: Optional[List[str]] = []
+    unit_price: float
+    category: str
+    product_name: str
+    sub_category: Optional[str] = None
+    has_warranty: Optional[bool] = False
+    warranty_tenure: Optional[int] = 0
+    warranty_unit: Optional[str] = "months"
+    tax: Optional[int] = 0
+    product_id: Optional[str] = None
+    selected_action: Optional[TargetCollection] = None   # ✅ new field
+
+
+class PurchaseOrderValidationInput(BaseModel):
+    order_id: str
+    expected_quantity: int
+    received_quantity: int
+    is_product_damaged: bool
+    selected_action: Optional[str] = None
+
+class PurchaseOrderSubmitRequest(BaseModel):
+    order_id: str
+    expected_quantity: int
+    received_quantity: int
+    is_product_damaged: bool
+    selected_action: TargetCollection
+    is_consumer_returnable: bool
+    consumer_return_conditions: Optional[List[str]] = []

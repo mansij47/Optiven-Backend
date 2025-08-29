@@ -93,8 +93,8 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
                 "received_quantity": contract.get("quantity", 0),
                 "expected_quantity": contract.get("quantity", 0),
                 "quantity_unit": contract.get("unit", "pcs"),
-                "is_product_damaged": False,
-                "returnable": contract.get("returnable", True),
+                "is_product_damaged": contract.get("is_product_damaged"),
+                "returnable": contract.get("returnable"),
                 "return_conditions": contract.get("return_conditions", []),
                 "is_consumer_returnable": contract.get("is_consumer_returnable", True),
                 "consumer_return_conditions": contract.get("consumer_return_conditions", []),
@@ -103,6 +103,7 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
                 "sub_category": contract.get("sub_category", "misc"),
                 "quantity": contract.get("quantity"),
                 "unit_price": contract.get("unit_price"),
+                "is_damage_returnable": contract.get("is_damage_returnable"),
 
             }
             await purchase_orders_collection.insert_one(purchase_order)

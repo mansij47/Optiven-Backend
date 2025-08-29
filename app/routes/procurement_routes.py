@@ -15,6 +15,7 @@ from app.services.procurement_contract_services import add_contract, update_cont
 from app.services import procurement_return_services
 
 from app.services import procurement_purchase_services
+from app.models.procurement_models import PurchaseOrderDetailResponse
 
 from app.models.procurement_models import PurchaseOrderValidationRequest
 from app.services import procurement_validation_services
@@ -47,6 +48,13 @@ from app.services.notification_service import (
 )
 from app.models.procurement_models import VendorModel,VendorUpdate
 from app.services import vendor_service as svc
+
+
+from fastapi import APIRouter, Request, Body, HTTPException
+from app.models.procurement_models import PurchaseOrderValidationInput, PurchaseOrderValidationRequest ,PurchaseOrderSubmitRequest
+from app.services import procurement_validation_services
+
+
 
 router = APIRouter()
 
@@ -259,6 +267,16 @@ async def get_purchase_orders(request: Request):
     store_id = user.get("store_id")
     return await procurement_purchase_services.get_all_purchase_orders(store_id)
 
+@router.get("/purchase-orders/{order_id}")
+async def get_purchase_order(order_id: str, request: Request):
+    user = request.state.user
+    if user.get("role") != "procurement":
+        raise HTTPException(status_code=403, detail="Only procurement users are allowed.")
+
+    store_id = user.get("store_id")
+    return await procurement_purchase_services.get_purchase_order_by_id(order_id, store_id)
+
+
 
 #Veiw the details of purchase order
 @router.put("/purchase-orders/{order_id}/mark-received")
@@ -266,19 +284,6 @@ async def mark_as_received(order_id: str):
     return await procurement_purchase_services.mark_purchase_order_as_received(order_id)
 
 
-#Validate the Purchase order
-@router.post("/purchase-orders/validate")
-async def validate_purchase_order_route(
-    request: Request, data: PurchaseOrderValidationRequest = Body(...)
-):
-    user = request.state.user
-    if user.get("role") != "procurement":
-        raise HTTPException(status_code=403, detail="Only procurement users allowed.")
-
-    store_id = user.get("store_id")
-    org_id = user.get("org_id")  # If needed
-
-    return await procurement_validation_services.validate_purchase_order(data, store_id, org_id)
 
 
 #List of  Return orders from sales
@@ -446,3 +451,35 @@ async def procurement_dashboard(request: Request):
     store_id = user.get("store_id")
     return await get_procurement_dashboard_data(store_id)
 
+
+#Purchase Order Validation
+@router.post("/purchase-orders/validate/process")
+async def validate_purchase_order_preview(
+    request: Request, data: PurchaseOrderValidationInput = Body(...)
+):
+    user = request.state.user
+    if user.get("role") != "procurement":
+        raise HTTPException(status_code=403, detail="Only procurement users allowed.")
+
+    store_id = user.get("store_id")
+    org_id = user.get("org_id")
+
+    return await procurement_validation_services.validate_purchase_order_preview(
+        data, store_id, org_id
+    )
+
+
+@router.post("/purchase-orders/validate/submit")
+async def submit_purchase_order(
+    request: Request, data: PurchaseOrderSubmitRequest
+):
+    user = request.state.user
+    if user.get("role") != "procurement":
+        raise HTTPException(status_code=403, detail="Only procurement users allowed.")
+
+    store_id = user.get("store_id")
+    org_id = user.get("org_id")
+
+    return await procurement_validation_services.submit_purchase_order(
+        data, store_id, org_id
+    )

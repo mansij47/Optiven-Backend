@@ -5,57 +5,113 @@ from app.services.sales_add_raise_services import fetch_inventory_details
 from fastapi import HTTPException
 from app.utils.sales_utils import build_product_detail, parse_return_status, parse_status_string
 from bson.son import SON
+# async def get_all_sales_orders(store_id: str):
+#     orders = await db.SalesOrders.find(
+#         {"order_status": "0", "store_id": store_id},
+#         {"_id": 0}
+#     ).to_list(length=None)
+
+#     for order in orders:
+#         updated_products = []
+
+#         for product in order.get("products", []):
+#             product_id = product.get("product_id")
+#             ordered_quantity = int(product.get("order_quantity", 0))
+#             inventory_item = await db.Inventory.find_one({
+#                 "store_id": store_id,
+#                 "product_id": product_id
+#             })
+
+#             try:
+#                 inventory_quantity = int(inventory_item.get("quantity", 0)) if inventory_item else 0
+#             except (ValueError, TypeError):
+#                 inventory_quantity = 0
+
+#             # Compare and determine product_status
+#             product_status = "Stock-out" if inventory_quantity < ordered_quantity else "Stock-in"
+
+#             # Add product_status to product
+#             product["product_status"] = product_status
+#             updated_products.append(product)
+
+#         # Update products list
+#         order["products"] = updated_products
+
+#         # Convert status field
+#         order["status"] = parse_status_string(order.get("status", "0"))
+
+#         # Remove order_status field if present
+#         if "order_status" in order:
+#             del order["order_status"]
+
+#     return orders
+
+# async def get_all_sold_orders(store_id: str):
+#     orders = await db.SalesOrders.find(
+#         {"store_id": store_id, "order_status": "1"},
+#         {"_id": 0}
+#     ).to_list(length=None)
+
+#     for order in orders:
+#         # Convert order_status to status text
+#         order["status"] = parse_status_string(order["order_status"])
+#         # Remove raw order_status field from final output
+#         order.pop("order_status", None)
+
+#     return orders
+
+
 async def get_all_sales_orders(store_id: str):
-    orders = await db.SalesOrders.find(
+    cursor = db.SalesOrders.find(
         {"order_status": "0", "store_id": store_id},
         {"_id": 0}
-    ).to_list(length=None)
+    ).sort([("_id", -1)])   # ✅ latest first
+
+    orders = await cursor.to_list(length=None)
 
     for order in orders:
         updated_products = []
-
         for product in order.get("products", []):
             product_id = product.get("product_id")
             ordered_quantity = int(product.get("order_quantity", 0))
-            inventory_item = await db.Inventory.find_one({
-                "store_id": store_id,
-                "product_id": product_id
-            })
+
+            # Fetch inventory record
+            inventory_item = await db.Inventory.find_one(
+                {"store_id": store_id, "product_id": product_id}
+            )
 
             try:
                 inventory_quantity = int(inventory_item.get("quantity", 0)) if inventory_item else 0
             except (ValueError, TypeError):
                 inventory_quantity = 0
 
-            # Compare and determine product_status
+            # Determine product_status
             product_status = "Stock-out" if inventory_quantity < ordered_quantity else "Stock-in"
-
-            # Add product_status to product
             product["product_status"] = product_status
             updated_products.append(product)
 
-        # Update products list
+        # Replace products list
         order["products"] = updated_products
 
         # Convert status field
         order["status"] = parse_status_string(order.get("status", "0"))
 
-        # Remove order_status field if present
-        if "order_status" in order:
-            del order["order_status"]
+        # Clean up order_status
+        order.pop("order_status", None)
 
     return orders
 
+
 async def get_all_sold_orders(store_id: str):
-    orders = await db.SalesOrders.find(
+    cursor = db.SalesOrders.find(
         {"store_id": store_id, "order_status": "1"},
         {"_id": 0}
-    ).to_list(length=None)
+    ).sort([("_id", -1)])   # ✅ latest first
+
+    orders = await cursor.to_list(length=None)
 
     for order in orders:
-        # Convert order_status to status text
-        order["status"] = parse_status_string(order["order_status"])
-        # Remove raw order_status field from final output
+        order["status"] = parse_status_string(order.get("order_status", "1"))
         order.pop("order_status", None)
 
     return orders
@@ -258,7 +314,7 @@ async def mark_return_sent_to_procurement(return_id: str, store_id: str):
     return {"message": f"Return order {return_id} marked as sent to procurement"}
 
 async def get_all_procurement_returns(store_id: str):
-    cursor = db.ReturnOrders.find({"sent_to_procurement": 1,"store_id": store_id},{"_id":0})
+    cursor = db.ReturnOrders.find({"sent_to_procurement": 1,"store_id": store_id},{"_id":0}).sort([("_id", -1)])
     result = []
     async for r in cursor:
         result.append(r)  # Append the entire document as it is

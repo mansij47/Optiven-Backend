@@ -4,15 +4,31 @@ from app.utils.raise_order import build_product_detail, fetch_inventory_details,
 
 # it includes both - sold orders and requested orders
 
+# async def get_all_sold_orders(store_id: str):
+#     # Filter orders by store_id and order_status = "1"
+#     orders = await db.SalesOrders.find(
+#         {"store_id": store_id, "order_status": "1"},
+#         {"_id": 0}
+#     ).to_list(length=None)
+#     for order in orders:
+#         # Convert order_status to status text
+#         order["status"] = parse_status_string(order["order_status"])
+#         # Remove raw order_status field from final output
+#         order.pop("order_status", None)
+#     return orders
+
 async def get_all_sold_orders(store_id: str):
     # Filter orders by store_id and order_status = "1"
-    orders = await db.SalesOrders.find(
+    cursor = db.SalesOrders.find(
         {"store_id": store_id, "order_status": "1"},
         {"_id": 0}
-    ).to_list(length=None)
+    ).sort([("_id", -1)])   # ✅ Latest orders first
+
+    orders = await cursor.to_list(length=None)
+
     for order in orders:
         # Convert order_status to status text
-        order["status"] = parse_status_string(order["order_status"])
+        order["status"] = parse_status_string(order.get("order_status", "1"))
         # Remove raw order_status field from final output
         order.pop("order_status", None)
     return orders

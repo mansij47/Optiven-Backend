@@ -31,26 +31,55 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
         raise HTTPException(status_code=500, detail=f"Error adding product: {str(e)}")
 
 
+# async def get_all_products(store_id: str):
+#     try:
+#         products_cursor = db.Inventory.find({"store_id": store_id}, {"_id": 0})
+#         products = []
+#         async for product in products_cursor:
+           
+#             # product["_id"] = str(product["_id"])  # Convert ObjectId to string
+            
+#             try:
+#                 quantity = int(product.get("quantity", 0))
+#             except (ValueError, TypeError):
+#                 quantity = 0
+
+#             product["status"] = "Stock-in" if quantity > 0 else "Stock-out"
+#             # Remove _id if present
+#             if "_id" in product:
+#                 del product["_id"]
+#             products.append(product)
+
+#         return products
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error retrieving products: {str(e)}")
+
 async def get_all_products(store_id: str):
     try:
-        products_cursor = db.Inventory.find({"store_id": store_id}, {"_id": 0})
+        # Sort products in reverse order (latest added first)
+        products_cursor = (
+            db["Inventory"].find({"store_id": store_id}, {"_id": 0})
+            .sort("_id", -1)
+        )
+
         products = []
         async for product in products_cursor:
-           
-            # product["_id"] = str(product["_id"])  # Convert ObjectId to string
-            
+            # Safely handle quantity
             try:
                 quantity = int(product.get("quantity", 0))
             except (ValueError, TypeError):
                 quantity = 0
 
+            # Add computed stock status
             product["status"] = "Stock-in" if quantity > 0 else "Stock-out"
-            # Remove _id if present
-            if "_id" in product:
-                del product["_id"]
+
+            # Ensure _id is removed if somehow included
+            product.pop("_id", None)
+
             products.append(product)
 
         return products
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving products: {str(e)}")
 
