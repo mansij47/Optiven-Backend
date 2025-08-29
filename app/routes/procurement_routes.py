@@ -4,6 +4,7 @@ from typing import Dict
 
 from jose import JWTError
 from pydantic import ValidationError
+from bson  import ObjectId
 
 from app.models.procurement_models import Contract,ContractUpdate, ContractStatusUpdate, RequestedOrder, RequestedOrderUpdate
 
@@ -44,12 +45,71 @@ from app.services.notification_service import (
     update_notification_by_id,
     delete_notification_by_id
 )
+from app.models.procurement_models import VendorModel,VendorUpdate
+from app.services import vendor_service as svc
 
 router = APIRouter()
 
 @router.get("/")
 def root():
     return {"message": "Welcome to Optiven Procurement APIs"}
+
+#vendor collection
+# CREATE
+@router.post("/vendors")
+async def create_vendor(vendor: VendorModel, request: Request):
+    user = request.state.user
+    if not user or user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    vendor_id = await svc.create_vendor(vendor, request)
+    return {"message": "Vendor created successfully", "vendor_id": vendor_id}
+
+# READ ALL
+@router.get("/vendors")
+async def get_vendors(request: Request):
+    user = request.state.user
+    if not user or user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    return await svc.get_all_vendors(request)
+
+# READ ONE (BY UUID)
+@router.get("/vendors/{vendor_id}")
+async def get_vendor(vendor_id: str, request: Request):
+    user = request.state.user
+    if not user or user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    vendor = await svc.get_vendor_by_id(vendor_id, request)
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    return vendor
+
+# UPDATE (BY UUID)
+@router.patch("/vendors/{vendor_id}")
+async def update_vendor(vendor_id: str, vendor: VendorUpdate, request: Request):
+    user = request.state.user
+    if not user or user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    updated_count = await svc.update_vendor(vendor_id, vendor.dict(exclude_unset=True), request)
+    if updated_count == 0:
+        raise HTTPException(status_code=404, detail="Vendor not found or no changes made")
+    return {"message": "Vendor updated successfully"}
+
+# DELETE (BY UUID)
+@router.delete("/vendors/{vendor_id}")
+async def delete_vendor(vendor_id: str, request: Request):
+    user = request.state.user
+    if not user or user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    deleted_count = await svc.delete_vendor(vendor_id, request)
+    if deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    return {"message": "Vendor deleted successfully"}
+
 
 #RequestedOrders
 @router.get("/requested-orders")
