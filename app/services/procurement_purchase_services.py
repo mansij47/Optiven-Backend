@@ -9,7 +9,11 @@ RECEIVED_MAP = {0: "Waiting", 1: "Received"}
 VALIDATION_MAP = {0: "Pending", 1: "Completed"}
 
 async def get_all_purchase_orders(store_id: str):
-    cursor = purchase_orders_collection.find({"store_id": store_id}, {"_id": 0})
+    # 👇 Added sort so latest entries come first
+    cursor = purchase_orders_collection.find(
+        {"store_id": store_id}, {"_id": 0}
+    ).sort("_id", -1)
+
     result = []
     async for order in cursor:
         # Handle received_status (supports both int and string)

@@ -5,10 +5,11 @@ from bson.objectid import ObjectId
 
 #List of Loss Orders
 async def get_loss_orders_by_store(store_id: str):
-    cursor = db.LossOrders.find({"store_id": store_id})
+    cursor = db["LossOrders"].find({"store_id": store_id}).sort("_id", -1)  # latest first
     loss_orders = []
+
     async for order in cursor:
-        order.pop("_id", None)
+        order.pop("_id", None)  # remove Mongo ObjectId
 
         quantity = order.get("quantity_lost", 0)
         price = order.get("unit_price", 0.0)
@@ -23,10 +24,7 @@ async def get_loss_orders_by_store(store_id: str):
 
         loss_orders.append(order)
 
-        if not loss_orders:
-            return []
-
-    return loss_orders
+    return loss_orders  # will be [] if no docs
 
 
 #Veiw loss order details by Product_id 

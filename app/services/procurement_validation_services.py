@@ -127,6 +127,89 @@ async def _run_validation_logic(data: PurchaseOrderValidationRequest, store_id: 
 
 
 
+# def generate_id(prefix: str) -> str:
+#     return f"{prefix}{uuid.uuid4().hex[:6].upper()}"
+
+# async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str, org_id: str):
+#     base_order = await db["PurchaseOrders"].find_one({"order_id": data.order_id})
+#     if not base_order:
+#         raise HTTPException(status_code=404, detail="Order not found")
+
+#     # --- INVENTORY CASE ---
+#     if data.selected_action == "Inventory":
+#         final_doc = {
+#             "product_id": generate_id("PRD"),
+#             "org_id": org_id,
+#             "store_id": store_id,
+#             "product_name": base_order.get("product_name"),
+#             "is_consumer_returnable": data.is_consumer_returnable,
+#             "consumer_return_conditions": data.consumer_return_conditions,
+#             "is_seller_returnable": base_order.get("returnable", False),
+#             "seller_return_conditions": base_order.get("return_conditions", []),
+#             "unit_price": str(base_order.get("unit_price", "0")),
+#             "unit": base_order.get("unit"),
+#             "quantity": data.received_quantity,
+#             "category": base_order.get("category"),
+#             "sub_category": base_order.get("sub_category", ""),
+#             "tags": [],
+#             "tax": float(base_order.get("tax", 0)),
+#             "has_warranty": base_order.get("has_warranty", False),
+#             "warranty_tenure": base_order.get("warranty_tenure", 0),
+#             "warranty_unit": base_order.get("warranty_unit", "months"),
+#             "last_updated": str(datetime.now()),
+#             "status": "active",
+#         }
+#         target_collection = db["Inventory"]
+
+#     # --- LOSS ORDERS CASE ---
+#     elif data.selected_action == "LossOrders":
+#         final_doc = {
+#             "product_id": generate_id("PRD"),
+#             "org_id": org_id,
+#             "store_id": store_id,
+#             "product_name": base_order.get("product_name"),
+#             "category": base_order.get("category"),
+#             "date_reported": str(datetime.now().date()),
+#             "quantity_lost": data.received_quantity,
+#             "unit": base_order.get("unit"),
+#             "unit_price": str(base_order.get("unit_price", "0")),
+#             "reason": "Damaged & Not Returnable",
+#         }
+#         target_collection = db["LossOrders"]
+
+#     # --- RETURN TO VENDOR CASE ---
+#     elif data.selected_action == "ReturnToVendor":
+#         final_doc = {
+#             "return_id": generate_id("RTV"),
+#             "order_id": data.order_id,
+#             "vendor_name": base_order.get("vendor_name"),
+#             "product_name": base_order.get("product_name"),
+#             "delivery_date": base_order.get("delivery_date"),
+#             "status": 1,
+#             "return_amount": str(data.received_quantity * float(base_order.get("unit_price", 0))),
+#             "original_quantity": data.expected_quantity,
+#             "return_quantity": data.received_quantity,
+#             "unit": base_order.get("unit"),
+#             "contract_id": base_order.get("contract_id"),
+#             "purchase_date": str(datetime.now().date()),
+#             "product_condition": "Damaged",
+#             "total_price": int(data.received_quantity * float(base_order.get("unit_price", 0))),
+#             "unit_price": int(base_order.get("unit_price", 0)),
+#             "return_reason": "Damaged on Delivery",
+#             "store_id": store_id,
+#             "org_id": org_id,
+#         }
+#         target_collection = db["ReturnToVendor"]
+
+#     else:
+#         raise HTTPException(status_code=400, detail="Invalid selected_action")
+
+#     # Insert document
+#     result = await target_collection.insert_one(final_doc)
+#     final_doc["_id"] = str(result.inserted_id)
+#     return final_doc
+
+
 def generate_id(prefix: str) -> str:
     return f"{prefix}{uuid.uuid4().hex[:6].upper()}"
 
@@ -204,7 +287,14 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
     else:
         raise HTTPException(status_code=400, detail="Invalid selected_action")
 
-    # Insert document
+    # Insert document into target collection
     result = await target_collection.insert_one(final_doc)
     final_doc["_id"] = str(result.inserted_id)
+
+    # --- Update PurchaseOrder validation_status to "completed" ---
+    await db["PurchaseOrders"].update_one(
+        {"order_id": data.order_id},
+        {"$set": {"validation_status": "Completed", "last_updated": str(datetime.now())}}
+    )
+
     return final_doc

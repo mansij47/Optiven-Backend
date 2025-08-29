@@ -10,14 +10,32 @@ status_map = {
     2: "Pending"
 }
 
-#List of Return To Vendor
+# # ✅ List of Return To Vendor
 async def get_all_returns(store_id: str):
-    returns_cursor = return_collection.find({"store_id": store_id}, {"_id": 0})
-    returns = []
-    async for item in returns_cursor:
-        item["status"] = status_map.get(item.get("status", 0), "Returned")
-        returns.append(ReturnToVendorResponse(**item))
-    return returns
+    try:
+        # Fetch and sort in reverse (_id descending → newest first)
+        returns_cursor = (
+            return_collection.find({"store_id": store_id}, {"_id": 0})
+            .sort("_id", -1)
+        )
+
+        returns = []
+        async for item in returns_cursor:
+            # Normalize status
+            raw_status = item.get("status", 0)
+            item["status"] = (
+                status_map.get(raw_status, raw_status)
+                if not isinstance(raw_status, str)
+                else raw_status
+            )
+
+            # ✅ Wrap in Pydantic model
+            returns.append(ReturnToVendorResponse(**item))
+
+        return returns
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving returns: {str(e)}")
 
 
 #ReturnToVendor Details
