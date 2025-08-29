@@ -80,8 +80,8 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
         inventory_quantity = 0
 
     requested_quantity = max(order_quantity - inventory_quantity, 0)
-    if requested_quantity <= 0:
-        raise HTTPException(status_code=400, detail="No extra quantity to request.")
+    # if requested_quantity <= 0:
+    #     raise HTTPException(status_code=400, detail="No extra quantity to request.(Inventory has enough stock)")
 
     return {
         "org_id": org_id,

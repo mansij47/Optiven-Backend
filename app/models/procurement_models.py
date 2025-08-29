@@ -14,6 +14,30 @@ class LoginModel(BaseModel):
     email: EmailStr
     password: str  
 
+# vendor collection
+class VendorModel(BaseModel):
+    vendor_name: str
+    email: EmailStr
+    phone_number: str
+    vendor_store_name:str
+    vendor_store_address: str
+    pincode: str
+    gst_number: str
+    business_type: str
+    created_at: Optional[datetime] = datetime.utcnow()
+    updated_at: Optional[datetime] = datetime.utcnow()
+
+class VendorUpdate(BaseModel):
+    vendor_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone_number: Optional[str] = None
+    vendor_store_name: Optional[str] = None
+    vendor_store_address: Optional[str] = None
+    pincode: Optional[str] = None
+    gst_number: Optional[str] = None
+    business_type: Optional[str] = None
+    updated_at: Optional[datetime] = datetime.utcnow()
+
 #Requested Order
 class RequestedOrder(BaseModel):
     product_name: str
