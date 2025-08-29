@@ -18,6 +18,7 @@ class VendorModel(BaseModel):
     vendor_name: str
     email: EmailStr
     phone_number: str
+    vendor_store_name:str
     vendor_store_address: str
     pincode: str
     gst_number: str
@@ -29,6 +30,7 @@ class VendorUpdate(BaseModel):
     vendor_name: Optional[str] = None
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
+    vendor_store_name: Optional[str] = None
     vendor_store_address: Optional[str] = None
     pincode: Optional[str] = None
     gst_number: Optional[str] = None
