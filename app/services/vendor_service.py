@@ -94,9 +94,3 @@ async def delete_vendor(vendor_id: str, request: Request):
     return result.deleted_count
 
 
-#delete by objectId of vendor
-# async def delete_vendor(vendor_id: str):
-#     result = await VENDOR_COLLECTION.delete_one({"_id": ObjectId(vendor_id)})
-#     return result.deleted_count
-#     result = await VENDOR_COLLECTION.delete_one({"_id": ObjectId(vendor_id)})
-#     return result.deleted_count
