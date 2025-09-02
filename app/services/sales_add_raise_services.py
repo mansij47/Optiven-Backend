@@ -105,8 +105,8 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
 # --- Helper function to fetch and validate the sales order ---
 async def fetch_sales_order(order_id: str, store_id: str):
     order = await db.SalesOrders.find_one({"order_id": order_id, "store_id": store_id}, {"_id": 0})
-    if not order:
-        raise HTTPException(status_code=404, detail="Sales order not found for this store")
+    # if not order:
+    #     raise HTTPException(status_code=404, detail="Sales order not found for this store")
     if order.get("order_status") != "1":
         raise HTTPException(status_code=400, detail="Only fulfilled (order_status=1) orders can be returned")
     return order

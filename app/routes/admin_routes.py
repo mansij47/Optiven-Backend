@@ -52,6 +52,7 @@ from app.models.store_model import StoreUpdate, StaffInput
 from app.services.store_service import update_store_by_token, add_staff_to_department, update_staff_in_department, delete_staff_from_department
 from app.services.dashboard_service import get_dashboard_data
 from app.models.dashboard_model import DashboardResponse
+
 router = APIRouter()
 
 # ================== ROOT ==================
@@ -556,4 +557,3 @@ async def get_loss_orders(request: Request):
     store_id = user["store_id"]
 
     return await admin_lossOrders_service.get_loss_orders_by_store(store_id)
-
