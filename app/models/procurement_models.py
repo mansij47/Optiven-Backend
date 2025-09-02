@@ -1,12 +1,7 @@
 from enum import Enum
-from typing import List,Optional
-from pydantic import BaseModel, EmailStr
-from pydantic import BaseModel, Field
+from typing import List,Optional,Literal
+from pydantic import BaseModel, EmailStr,Field
 from datetime import datetime
-from typing import Optional
-from typing import Literal
-from pydantic import BaseModel
-from typing import List, Optional
 # from datetime import date
 
 #Login 
@@ -24,6 +19,7 @@ class VendorModel(BaseModel):
     pincode: str
     gst_number: str
     business_type: str
+    tags: Optional[List[str]] = None
     created_at: Optional[datetime] = datetime.utcnow()
     updated_at: Optional[datetime] = datetime.utcnow()
 
@@ -36,6 +32,7 @@ class VendorUpdate(BaseModel):
     pincode: Optional[str] = None
     gst_number: Optional[str] = None
     business_type: Optional[str] = None
+    tags: Optional[List[str]] = None
     updated_at: Optional[datetime] = datetime.utcnow()
 
 #Requested Order
