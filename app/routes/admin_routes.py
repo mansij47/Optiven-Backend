@@ -53,12 +53,6 @@ from app.services.store_service import update_store_by_token, add_staff_to_depar
 from app.services.dashboard_service import get_dashboard_data
 from app.models.dashboard_model import DashboardResponse
 
-from app.models.new_inventory_model import InventoryModel
-import app.services.new_inventory_service as svc
-
-
-
-
 router = APIRouter()
 
 # ================== ROOT ==================
@@ -563,37 +557,3 @@ async def get_loss_orders(request: Request):
     store_id = user["store_id"]
 
     return await admin_lossOrders_service.get_loss_orders_by_store(store_id)
-
-# ================== New Inventory ==================
-@router.post("/new/inventory")
-async def create_inventory(inventory: InventoryModel, request: Request):
-    sku_id = await svc.create_inventory(inventory.dict(), request)
-    return {"message": "Inventory created successfully", "sku_id": sku_id}
-
-
-@router.patch("/new/inventory/{sku_id}")
-async def update_inventory(sku_id: str, inventory: InventoryModel, request: Request):
-    updated_count = await svc.update_inventory(sku_id, inventory.dict(exclude_unset=True), request)
-    if updated_count == 0:
-        raise HTTPException(status_code=404, detail="Inventory not found or no changes made")
-    return {"message": "Inventory updated successfully"}
-
-
-@router.get("/new/inventory")
-async def get_all_inventory(request: Request):
-    items = await svc.get_all_inventory(request)
-    return {"inventory": items}
-
-
-@router.get("/new/inventory/{sku_id}")
-async def get_inventory_by_id(sku_id: str, request: Request):
-    item = await svc.get_inventory_by_id(sku_id, request)
-    return item
-
-
-@router.delete("/new/inventory/{sku_id}")
-async def delete_inventory(sku_id: str, request: Request):
-    deleted_count = await svc.delete_inventory(sku_id, request)
-    if deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Inventory not found")
-    return {"message": "Inventory deleted successfully"}
