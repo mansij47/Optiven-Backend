@@ -14,7 +14,7 @@ class VendorModel(BaseModel):
     vendor_name: str
     email: EmailStr
     phone_number: str
-    vendor_store_name:str
+    vendor_store_name:Optional[str]= None
     vendor_store_address: str
     pincode: str
     gst_number: str

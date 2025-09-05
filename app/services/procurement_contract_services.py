@@ -1,43 +1,74 @@
 import logging
 import uuid
-from fastapi import HTTPException
+from fastapi import HTTPException,Request
+from bson import ObjectId
+from datetime import datetime
+from app.db import db
+from typing import Dict
+
 from app.models.procurement_models import Contract
 from app.utils.auth import verify_password, create_access_token
-from app.db import db
-from fastapi import HTTPException
-from app.db import db
-from fastapi import HTTPException
-from typing import Dict
-from app.db import db  # Make sure this is your MongoDB client instance
-from app.models.procurement_models import ContractUpdate  # Your Pydantic model
-from bson import ObjectId
+ 
+from app.services.vendor_service import create_vendor
+from app.models.procurement_models import VendorModel
 
-from datetime import datetime
+from app.models.procurement_models import ContractUpdate  # Your Pydantic model
+
 
 contracts_collection = db["Contracts"]
 purchase_orders_collection = db["PurchaseOrders"]
+VENDOR_COLLECTION = db["Vendors"]
 
-
-# Add contract 
-async def add_contract(contract_data: Contract, store_id: str):
-
+#Add Contract
+async def add_contract(contract_data: Contract, store_id: str, request: Request):
     if not contract_data.contract_id:
         contract_data.contract_id = str(uuid.uuid4())
-    existing = await contracts_collection.find_one({
-        "contract_id": contract_data.contract_id,
-        "store_id": store_id
-    }, {"_id": 0})
 
+    existing = await contracts_collection.find_one(
+        {"contract_id": contract_data.contract_id, "store_id": store_id},
+        {"_id": 0}
+    )
     if existing:
         raise HTTPException(status_code=400, detail="Contract with this ID already exists.")
 
     try:
+        vendor_id = None
+
+        # ✅ Check vendor existence before creating
+        if contract_data.vendor_name and contract_data.gst_number:
+            existing_vendor = await VENDOR_COLLECTION.find_one(
+                {"vendor_name": contract_data.vendor_name, "gst_number": contract_data.gst_number},
+                {"vendor_id": 1, "_id": 0}
+            )
+            if existing_vendor:
+                vendor_id = existing_vendor["vendor_id"]
+            else:
+                # Call create_vendor to insert vendor
+                vendor_payload = VendorModel(
+                    vendor_name=contract_data.vendor_name,
+                    email=contract_data.vendor_email,   # fixed
+                    phone_number=contract_data.phone,
+                    vendor_store_name=None,  # or fallback
+                    vendor_store_address=contract_data.address,
+                    pincode=contract_data.pincode,
+                    gst_number=contract_data.gst_number,
+                    business_type=contract_data.business_type,
+)
+
+                vendor_id = await create_vendor(vendor_payload, request)
+
+        # ✅ Insert contract with vendor_id
         contract_dict = contract_data.model_dump()
         contract_dict["store_id"] = store_id
+        if vendor_id:
+            contract_dict["vendor_id"] = vendor_id
+
         await contracts_collection.insert_one(contract_dict)
 
         return {
-            "message": "Contract successfully created"
+            "message": "Contract successfully created",
+            "vendor_id": vendor_id,
+            "contract_id": contract_dict["contract_id"],
         }
 
     except Exception as e:
