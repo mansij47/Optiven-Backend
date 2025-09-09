@@ -31,29 +31,6 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
         raise HTTPException(status_code=500, detail=f"Error adding product: {str(e)}")
 
 
-# async def get_all_products(store_id: str):
-#     try:
-#         products_cursor = db.Inventory.find({"store_id": store_id}, {"_id": 0})
-#         products = []
-#         async for product in products_cursor:
-           
-#             # product["_id"] = str(product["_id"])  # Convert ObjectId to string
-            
-#             try:
-#                 quantity = int(product.get("quantity", 0))
-#             except (ValueError, TypeError):
-#                 quantity = 0
-
-#             product["status"] = "Stock-in" if quantity > 0 else "Stock-out"
-#             # Remove _id if present
-#             if "_id" in product:
-#                 del product["_id"]
-#             products.append(product)
-
-#         return products
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Error retrieving products: {str(e)}")
-
 async def get_all_products(store_id: str):
     try:
         # Sort products in reverse order (latest added first)

@@ -278,7 +278,7 @@ async def get_purchase_order(order_id: str, request: Request):
 
 
 
-#Veiw the details of purchase order
+
 @router.put("/purchase-orders/{order_id}/mark-received")
 async def mark_as_received(order_id: str):
     return await procurement_purchase_services.mark_purchase_order_as_received(order_id)

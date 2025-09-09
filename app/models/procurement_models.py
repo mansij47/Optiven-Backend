@@ -198,7 +198,8 @@ class PurchaseOrderDetailResponse(BaseModel):
     consumer_return_conditions: Optional[List[str]] = []
     store_id: Optional[str] = None
     org_id: Optional[str] = None
-
+    warranty_tenure: Optional[int] = None
+    warranty_unit: Optional[str] = None
 
 
 
