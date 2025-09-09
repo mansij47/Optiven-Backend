@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, HTTPException, Path, Request, Body
+from fastapi import APIRouter, HTTPException, Path, Request, Body, Query
 from typing import Dict
 
 from jose import JWTError
@@ -48,9 +48,6 @@ from app.services.notification_service import (
 )
 from app.models.procurement_models import VendorModel,VendorUpdate
 from app.services import vendor_service as svc
-
-
-from fastapi import APIRouter, Request, Body, HTTPException
 from app.models.procurement_models import PurchaseOrderValidationInput, PurchaseOrderValidationRequest ,PurchaseOrderSubmitRequest
 from app.services import procurement_validation_services
 
@@ -75,12 +72,30 @@ async def create_vendor(vendor: VendorModel, request: Request):
 
 # READ ALL
 @router.get("/vendors")
-async def get_vendors(request: Request):
+async def get_vendors(
+    request: Request,
+    search: str = Query(None),
+    status: str = Query(None),
+    statuses: list[str] = Query(None),
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(5, ge=1, le=100),
+):
     user = request.state.user
     if not user or user.get("role") not in ["admin", "procurement"]:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-    return await svc.get_all_vendors(request)
+    return await svc.get_all_vendors(
+        request=request,
+        search=search,
+        status=status,
+        statuses=statuses,
+        date_from=date_from,
+        date_to=date_to,
+        page=page,
+        page_size=page_size,
+    )
 
 # READ ONE (BY UUID)
 @router.get("/vendors/{vendor_id}")
@@ -139,7 +154,7 @@ async def add_contract_route(contract: Contract, request: Request):
             raise HTTPException(status_code=403, detail="Only procurement users are allowed.")
 
         store_id = user.get("store_id")
-        return await add_contract(contract, store_id)
+        return await add_contract(contract, store_id, request)
 
     except ValidationError as e:
         logging.error("Validation error in route: %s", e.json())

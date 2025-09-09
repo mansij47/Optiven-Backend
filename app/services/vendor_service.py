@@ -3,7 +3,7 @@ from datetime import datetime
 from uuid import uuid4
 from app.db import db  # Mongo connection
 from bson import ObjectId
-from fastapi import Request
+from fastapi import Request, Query
 
 VENDOR_COLLECTION = db.Vendors
 
@@ -21,6 +21,7 @@ def serialize_vendor(vendor: dict) -> dict:
 
     if "updated_at" in vendor and isinstance(vendor["updated_at"], datetime):
         vendor["updated_at"] = vendor["updated_at"].isoformat()
+        
 
     return vendor
 
@@ -47,14 +48,81 @@ async def create_vendor(vendor_data: VendorModel, request: Request):
 
 
 # -------- READ ----------
-async def get_all_vendors(request: Request):
+async def get_all_vendors(
+    request: Request,
+    search: str = Query(None),
+    status: str = Query(None),
+    statuses: list[str] = Query(None),
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+    page: int = 1,
+    page_size: int = 5
+):
     user = request.state.user
     query = {
         "store_id": str(user.get("store_id")),
         "org_id": str(user.get("org_id")),
     }
-    vendors = await VENDOR_COLLECTION.find(query).to_list(100)
-    return [serialize_vendor(v) for v in vendors]
+
+    # 🔎 Search filter
+    if search:
+        query["$or"] = [
+            {"vendor_name": {"$regex": search, "$options": "i"}},
+            {"vendor_id": {"$regex": search, "$options": "i"}},
+        ]
+
+    # 📌 Single status filter
+    if status and status != "all":
+        query["status"] = status
+
+    # 📌 Multiple statuses filter
+    if statuses and isinstance(statuses, list) and len(statuses) > 0:
+        query["status"] = {"$in": statuses}
+
+    # 📅 Date range filter (safe parsing)
+    if date_from or date_to:
+        query["created_at"] = {}
+
+        if date_from:
+            if isinstance(date_from, str):
+                try:
+                    query["created_at"]["$gte"] = datetime.fromisoformat(date_from)
+                except ValueError:
+                    pass  # ignore invalid format
+            elif isinstance(date_from, datetime):
+                query["created_at"]["$gte"] = date_from
+
+        if date_to:
+            if isinstance(date_to, str):
+                try:
+                    query["created_at"]["$lte"] = datetime.fromisoformat(date_to)
+                except ValueError:
+                    pass
+            elif isinstance(date_to, datetime):
+                query["created_at"]["$lte"] = date_to
+
+    # 📄 Pagination with sorting
+    skip = (page - 1) * page_size
+    cursor = (
+        VENDOR_COLLECTION.find(query)
+        .sort("created_at", -1)  # latest first
+        .skip(skip)
+        .limit(page_size)
+    )
+    vendors = await cursor.to_list(length=page_size)
+
+    total_count = await VENDOR_COLLECTION.count_documents(query)
+
+    return {
+        "data": [serialize_vendor(v) for v in vendors],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total_count,
+            "pages": (total_count + page_size - 1) // page_size
+        }
+    }
+
 
 
 async def get_vendor_by_id(vendor_id: str, request: Request):

@@ -29,17 +29,11 @@ async def get_dashboard_data(store_id: str):
     revenue_pipeline = [
         { "$match": store_filter },
         { "$unwind": "$products" },
-        { "$match": { "products.store_id": store_id } },  # ✅ ensure revenue is only for products with same store_id
         {
             "$group": {
                 "_id": None,
                 "total_revenue": {
-                    "$sum": {
-                        "$multiply": [
-                            { "$toDouble": "$products.unit_price" },
-                            "$products.quantity"
-                        ]
-                    }
+                    "$sum": { "$toDouble": "$total_order_price" }
                 }
             }
         }
@@ -55,44 +49,50 @@ async def get_dashboard_data(store_id: str):
     )
     inventory_status = await inventory_cursor.to_list(length=None)
 
-    # ---------- 7. Finance Report ----------
+    # ---------- 7. Finance Report (Updated) ----------
+    # Group by month and store_id, sum total sales, products sold (quantity), and total orders per month
     finance_pipeline = [
         { "$match": store_filter },
         { "$unwind": "$products" },
-        { "$match": { "products.store_id": store_id } },  # ✅ filter by product store_id
         {
             "$addFields": {
-                "total_price": {
+                "order_month": { "$month": { "$toDate": "$order_date" } },
+                "product_quantity": { "$toInt": "$products.order_quantity" },
+                "product_sales": {
                     "$multiply": [
                         { "$toDouble": "$products.unit_price" },
-                        "$products.quantity"
+                        { "$toInt": "$products.order_quantity" }
                     ]
                 }
             }
         },
         {
             "$group": {
-                "_id": { "$month": { "$toDate": "$order_date" } },
-                "total_sales": { "$sum": "$total_price" },
-                "products_sold": { "$sum": "$products.quantity" },
-                "total_orders": { "$sum": 1 }
+                "_id": {
+                    "month": "$order_month",
+                    "store_id": "$store_id"
+                },
+                "total_sales": { "$sum": "$product_sales" },
+                "products_sold": { "$sum": "$product_quantity" },
+                "order_ids": { "$addToSet": "$_id" }
             }
         },
         {
             "$addFields": {
+                "total_orders": { "$size": "$order_ids" },
                 "average_order_value": {
                     "$cond": [
-                        { "$eq": ["$total_orders", 0] },
+                        { "$eq": [ { "$size": "$order_ids" }, 0 ] },
                         0,
-                        { "$divide": ["$total_sales", "$total_orders"] }
+                        { "$divide": [ "$total_sales", { "$size": "$order_ids" } ] }
                     ]
                 }
             }
         },
-        { "$sort": { "_id": 1 } }
+        { "$sort": { "_id.month": 1 } }
     ]
     finance_cursor = sales_orders_collection.aggregate(finance_pipeline)
-    finance_data = [doc async for doc in finance_cursor]
+    finance_data = [doc async for doc in finance_cursor if doc["_id"]["store_id"] == store_id]
 
     months = [
         "January", "February", "March", "April", "May", "June",
@@ -108,7 +108,7 @@ async def get_dashboard_data(store_id: str):
     }
 
     for entry in finance_data:
-        month_index = entry["_id"]
+        month_index = entry["_id"]["month"]
         if 1 <= month_index <= 12:
             finance_report["labels"].append(months[month_index - 1])
             finance_report["total_sales"].append(round(entry["total_sales"], 2))
@@ -120,19 +120,19 @@ async def get_dashboard_data(store_id: str):
     top_selling_pipeline = [
         { "$match": store_filter },
         { "$unwind": "$products" },
-        { "$match": { "products.store_id": store_id } },  # ✅ filter products by store_id
         {
             "$group": {
                 "_id": "$products.product_name",
-                "total_quantity": { "$sum": "$products.quantity" },
+                "total_quantity": { "$sum": "$products.order_quantity" },
                 "total_sales": {
                     "$sum": {
                         "$multiply": [
                             { "$toDouble": "$products.unit_price" },
-                            "$products.quantity"
+                            "$products.order_quantity"
                         ]
                     }
-                }
+                },
+                "total_order_price": { "$sum": { "$toDouble": "$total_order_price" } }  # ✅ Added here
             }
         },
         { "$sort": { "total_quantity": -1 } },
