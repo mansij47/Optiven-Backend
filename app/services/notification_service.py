@@ -15,7 +15,8 @@ async def create_notification(
     notification: NotificationBase,
     admin: Optional[bool] = False,
     sales: Optional[bool] = False,
-    procurement: Optional[bool] = False
+    procurement: Optional[bool] = False,
+    super_admin: Optional[bool] = False
 ):
     data = notification.dict()
 
@@ -28,6 +29,7 @@ async def create_notification(
         "admin": admin,
         "sales": sales,
         "procurement": procurement,
+        "super_admin": super_admin
     }
 
     sender_store_id = notification.sender.store_id

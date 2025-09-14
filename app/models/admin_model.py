@@ -1,7 +1,8 @@
 from datetime import datetime
-from typing import List, Union
+from typing import List, Union,Dict, Any
 from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
+
 
 class Product(BaseModel):
     org_id: Optional[str] = None
@@ -68,8 +69,7 @@ class LossOrder(BaseModel):
 class OrderProductInput(BaseModel): # type: ignore
     product_id: str
     quantity: int
-from typing import List, Dict, Any
-from pydantic import BaseModel
+
 
 class ReportResponse(BaseModel):
     total_loss: float
@@ -182,6 +182,7 @@ class NameModel(BaseModel):
     first_name: str= ""
     last_name: str= ""
     
+    
 class UserModel(BaseModel):
     id: str
     org_id: str
@@ -196,6 +197,12 @@ class UserModel(BaseModel):
     first_login: bool = True
     extra: str= ""
 
+
+class UserInfo(BaseModel):
+    id: str
+    store_id: str
+    role: str
+    email: EmailStr
 
 #forgot password
 

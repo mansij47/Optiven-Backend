@@ -27,17 +27,31 @@ async def get_dashboard_data(store_id: str):
 
     # ---------- 5. Total Revenue ----------
     revenue_pipeline = [
-        { "$match": store_filter },
-        { "$unwind": "$products" },
-        {
-            "$group": {
-                "_id": None,
-                "total_revenue": {
-                    "$sum": { "$toDouble": "$total_order_price" }
-                }
+    {"$match": {"store_id": store_id}},  # Filter by store
+    {"$unwind": "$products"},  # Unwind products array
+    {
+        "$addFields": {
+            "product_revenue": {
+                "$multiply": [
+                    {
+                        "$add": [
+                            {"$toDouble": "$products.unit_price"},
+                            {"$toDouble": {"$ifNull": ["$products.tax", 0]}}
+                        ]
+                    },
+                    {"$toDouble": "$products.order_quantity"}
+                ]
             }
         }
-    ]
+    },
+    {
+        "$group": {
+            "_id": None,
+            "total_revenue": {"$sum": "$product_revenue"}
+        }
+    }
+]
+
     revenue_cursor = sales_orders_collection.aggregate(revenue_pipeline)
     revenue_result = [doc async for doc in revenue_cursor]
     total_revenue = round(revenue_result[0]["total_revenue"], 2) if revenue_result else 0.0
