@@ -47,25 +47,35 @@ async def get_loss_data_by_user(user_id: str):
 
     # ---------- Revenue Calculation (filtered by store_id) ----------
     revenue_pipeline = [
-        {"$match": {"store_id": store_id}},   # ✅ only this store
-        {"$unwind": "$products"},
-        {
-            "$addFields": {
-                "total_price": {
-                    "$multiply": [
-                        {"$toDouble": "$products.unit_price"},
-                        "$products.quantity"
-                    ]
-                }
-            }
-        },
-        {
-            "$group": {
-                "_id": None,
-                "total_revenue": {"$sum": "$total_price"}
+    {"$match": {"store_id": store_id}},  # Only for this store
+    {"$unwind": "$products"},  # Flatten products array
+    {
+        "$addFields": {
+            "product_revenue": {
+                "$multiply": [
+                    {
+                        "$add": [
+                            {"$toDouble": "$products.unit_price"},
+                            {
+                                "$toDouble": {
+                                    "$ifNull": ["$products.tax", 0] # Default tax to 0 if missing
+                                }
+                            }
+                        ]
+                    },
+                    {"$toDouble": "$products.order_quantity"} 
+                ]
             }
         }
-    ]
+    },
+    {
+        "$group": {
+            "_id": None,
+            "total_revenue": {"$sum": "$product_revenue"}
+        }
+    }
+]
+
 
     revenue_result = await sales_orders_collection.aggregate(revenue_pipeline).to_list(length=1)
     total_revenue = round(revenue_result[0]["total_revenue"], 2) if revenue_result else 0

@@ -9,6 +9,7 @@ import traceback
 from jose import jwt, JWTError
 from bson import ObjectId
 import os
+from app.models.notification_model import UserInfo, NotificationBase
 from app.models.admin_model import DepartmentUserCreate, DepartmentUserUpdate, EditOrderModel, LoginModel, NewRaiseOrderRequest, Product, RaiseRequestOrderModel, ResetPasswordRequest, SalesOrderModel ,ProductUpdate
 from app.services import notification_service
 from app.services import admin_lossOrders_service
@@ -92,7 +93,8 @@ async def send_notification(
     model: NotificationBase,
     admin: Optional[bool] = Query(False),
     sales: Optional[bool] = Query(False),
-    procurement: Optional[bool] = Query(False)
+    procurement: Optional[bool] = Query(False),
+    super_admin: Optional[bool] = Query(False)
 ):
     user = request.state.user
     sender = {
@@ -106,8 +108,8 @@ async def send_notification(
         model,
         admin=admin,
         sales=sales,
-        procurement=procurement  
-       
+        procurement=procurement,
+        super_admin=super_admin  
     )
 
 
@@ -334,7 +336,39 @@ async def get_sold_orders_admin(request: Request):
 @router.post("/add-employee")
 async def add_employee(data: DepartmentUserCreate, request: Request):
     user = request.state.user  # This comes from JWT middleware
-    return await create_department_user(data, user)
+
+    # Step 1: Create the employee
+    employee_response = await create_department_user(data, user)
+
+    # Step 2: Prepare sender info for notification
+    sender_info = {
+        "id": user.get("user_id") or "unknown",  # or 'id' if that's what your JWT uses
+        "store_id": user.get("store_id"),
+        "role": user.get("role"),
+        "email": user.get("email")
+    }
+
+    # Step 3: Create Notification object
+    notification = NotificationBase(
+        sender=UserInfo(**sender_info),
+        type_of_notification="Employee Management",
+        title="New Employee Added",
+        message=f"{data.first_name} has been added to the team."
+        # No emails filter: notify all admins in the same store
+    )
+
+    # Step 4: Send Notification (e.g., to admin or other roles)
+    await create_notification(
+        notification=notification,
+        admin=True  # You can toggle other roles too
+    )
+
+    # Step 5: Return original employee creation response
+    return employee_response
+
+
+
+
 
 @router.get("/employees")
 async def fetch_employees(request: Request):
@@ -426,8 +460,6 @@ async def raise_order_request_api(data: NewRaiseOrderRequest, request: Request):
     response = await raise_order_request_service(data.dict(), org_id, store_id, requested_by)
 
     # ✅ Then create a notification for procurement
-    from app.models.notification_model import UserInfo, NotificationBase  # adjust import paths as needed
-
     notification = NotificationBase(
         sender=UserInfo(**requested_by),
         type_of_notification="Order Request",
@@ -437,7 +469,7 @@ async def raise_order_request_api(data: NewRaiseOrderRequest, request: Request):
 
     notification_response = await create_notification(
         notification=notification,
-        procurement=True  # 👈 send only to procurement
+        procurement=True # 👈 send only to procurement
     )
 
     return {
