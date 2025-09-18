@@ -103,7 +103,36 @@ async def mark_order_as_sold(order_id: str, request: Request):
     if updated_count == 0:
         raise HTTPException(status_code=404, detail="Order not found or already sold.")
 
-    return {"message": "Order marked as sold successfully", "order_id": order_id}
+    # Prepare notification sender info
+    from app.models.notification_model import UserInfo, NotificationBase
+    sender_info = {
+        "id": user.get("id", "unknown"),
+        "role": user.get("role"),
+        "store_id": store_id
+    }
+
+    # Use the dynamic message for notification
+    notification_message = "Order marked as sold successfully"
+    notification = NotificationBase(
+        sender=UserInfo(**sender_info),
+        type_of_notification="Order Sold",
+        title="Order Sold",
+        message=notification_message,
+    )
+
+    # Send notification to both sales and admin
+    from app.services.notification_service import create_notification
+    notification_response = await create_notification(
+        notification=notification,
+        admin=True,
+        sales=True
+    )
+
+    return {
+        "message": notification_message,
+        "order_id": order_id,
+        "notification": notification_response
+    }
 
 #order deleted successfully notification
 @router.delete("/orders/received/{order_id}") 

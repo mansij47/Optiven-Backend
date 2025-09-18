@@ -337,7 +337,39 @@ async def validate_return_order_route(
     store_id = user.get("store_id")
     org_id = user.get("org_id")  # optional if needed for logging or constraints
 
-    return await validate_return_order(data, store_id, org_id)
+    # Validate the return order
+    validation_result = await validate_return_order(data, store_id, org_id)
+
+    # Prepare notification sender info
+    from app.models.notification_model import UserInfo, NotificationBase
+    sender_info = {
+        "id": user.get("id", "unknown"),
+        "role": user.get("role"),
+        "store_id": store_id
+    }
+
+    # Use the dynamic message from validation_result for notification
+    notification_message = validation_result.get("message", "Return order validated.")
+    notification = NotificationBase(
+        sender=UserInfo(**sender_info),
+        type_of_notification="Return Order Validation",
+        title="Return Order Validated",
+        message=notification_message,
+    )
+
+    # Send notification to both procurement and admin
+    notification_response = await create_notification(
+        notification=notification,
+        admin=True,
+        procurement=True
+    )
+
+    # Return a top-level message for frontend popup, plus notification and details
+    return {
+        "message": validation_result.get("message", "Validation completed."),
+        "details": validation_result,
+        "notification": notification_response
+    }
 
 
 #List of loss orders 
