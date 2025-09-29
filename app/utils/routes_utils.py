@@ -31,7 +31,7 @@ async def delete_return_to_vendor(id: str, request: Request):
         raise HTTPException(status_code=404, detail="ReturnToVendor record not found or invalid ID.")
 
     return {"message": "ReturnToVendor deleted successfully", "id": id}
- @router.delete("/sales-orders/{id}")
+@router.delete("/sales-orders/{id}")
 async def delete_sales_order(id: str, request: Request):
     user = request.state.user
 
