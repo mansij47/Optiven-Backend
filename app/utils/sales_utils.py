@@ -24,6 +24,10 @@ def build_product_detail(inventory_item: dict, product_id: str, unit_price: floa
     line_total = unit_price * order_quantity
     tax = product_tax * order_quantity
 
+    # Set default return conditions if none provided
+    default_conditions = ["Wrong product", "Damaged on arrival", "Quality issues"]
+    return_conditions = consumer_return_conditions if consumer_return_conditions else default_conditions
+
     product_detail = {
         "product_id": product_id,
         "product_name": inventory_item["product_name"],
@@ -33,7 +37,7 @@ def build_product_detail(inventory_item: dict, product_id: str, unit_price: floa
         "inventory_quantity": inventory_quantity,
         "tax": product_tax,
         "unit": inventory_item.get("unit", ""),
-        "consumer_return_conditions": consumer_return_conditions}
+        "consumer_return_conditions": return_conditions}
 
     return product_detail, line_total + tax
 
@@ -161,17 +165,23 @@ async def enrich_products(products: list, return_quantity: int, reason: str):
 
         print(f"Checking {product_id}: is_customer_returnable={is_customer_returnable}, conditions={consumer_conditions}, reason={reason}")
 
+        # Get return conditions from the product itself if available, otherwise from inventory
+        product_return_conditions = product.get("consumer_return_conditions", consumer_conditions)
+        
+        print(f"Return conditions for {product_id}: {product_return_conditions}, Reason: {reason}")
+
         # Validate return eligibility
-        if not is_customer_returnable:
+        if not product_return_conditions:
             skipped_products.append({
                 "product_id": product_id,
-                "reason": "Product is not marked as consumer returnable"
+                "reason": "No return conditions found for the product"
             })
             continue
-        if reason not in consumer_conditions:
+        
+        if reason not in product_return_conditions:
             skipped_products.append({
                 "product_id": product_id,
-                "reason": f"Reason '{reason}' not in consumer_return_conditions: {consumer_conditions}"
+                "reason": f"Reason '{reason}' not in return conditions: {product_return_conditions}"
             })
             continue
 
