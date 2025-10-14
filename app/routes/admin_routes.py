@@ -383,18 +383,71 @@ async def fetch_employee_by_id(emp_id: str, request: Request):
 
 @router.patch("/employees/{emp_id}")
 async def update_employee(emp_id: str, data: DepartmentUserUpdate, request: Request):
-    user_info = request.state.user
-    return await update_employee_by_id(emp_id, data, user_info)
+    user = request.state.user
+
+    # Step 1: Update the employee
+    update_response = await update_employee_by_id(emp_id, data, user)
+
+    # Step 2: Prepare sender info for notification
+    sender_info = {
+        "id": user.get("id") or "unknown",
+        "store_id": user.get("store_id"),
+        "role": user.get("role"),
+        "email": user.get("email")
+    }
+
+    # Step 3: Create Notification object
+    notification = NotificationBase(
+        sender=UserInfo(**sender_info),
+        type_of_notification="Employee Management",
+        title="Employee Updated",
+        message=f"{data.first_name}'s details have been updated."
+    )
+
+    # Step 4: Send Notification
+    await create_notification(
+        notification=notification,
+        admin=True  # Notify admins
+    )
+
+    return update_response
 
 @router.delete("/employees/{emp_id}")
 async def delete_employee(emp_id: str, request: Request):
-    # Assuming your middleware attaches user info here:
-    user_info = getattr(request.state, "user", None)
-
-    if not user_info:
+    user = request.state.user
+    
+    if not user:
         raise HTTPException(status_code=401, detail="Unauthorized: User info missing")
 
-    return await delete_user_by_id(emp_id, user_info)
+    # Step 1: Get employee details before deletion (to include in notification)
+    employee = await get_employee_by_id(emp_id, user)
+    
+    # Step 2: Delete the employee
+    delete_response = await delete_user_by_id(emp_id, user)
+
+    # Step 3: Prepare sender info for notification
+    sender_info = {
+        "id": user.get("id") or "unknown",
+        "store_id": user.get("store_id"),
+        "role": user.get("role"),
+        "email": user.get("email")
+    }
+
+    # Step 4: Create Notification object
+    notification = NotificationBase(
+        sender=UserInfo(**sender_info),
+        type_of_notification="Employee Management",
+        title="Employee Removed",
+        message=f"Employee {employee.get('name', {}).get('first_name', '')} has been removed from the system."
+    )
+
+    # Step 5: Send Notification
+    await create_notification(
+        notification=notification,
+        admin=True  # Notify admins
+    )
+
+    return delete_response
 
 @router.delete("/employees/{emp_id}")
 async def delete_employee_by_id(emp_id: str, request: Request):
