@@ -17,7 +17,7 @@ async def add_sales_order(order_data: dict, store_id: str):
     order_data["total_order_price"] = round(subtotal, 2)
     order_data["order_id"] = await generate_order_id()
     order_data["customer_id"] = customer_id
-    order_data["order_status"] = "0"
+    order_data["status"] = "received"  # Changed from order_status to status
     order_data["store_id"] = store_id
 
     # Fix: Collect return conditions from all products
@@ -104,11 +104,32 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
 
 # --- Helper function to fetch and validate the sales order ---
 async def fetch_sales_order(order_id: str, store_id: str):
+    # Clean the input strings to remove any whitespace or tabs
+    order_id = order_id.strip()
+    store_id = store_id.strip()
+    
+    # Debug print to check what we're searching for
+    print(f"Searching for order_id: '{order_id}' in store_id: '{store_id}'")
+    
+    # Find the specific order for this store
     order = await db.SalesOrders.find_one({"order_id": order_id, "store_id": store_id}, {"_id": 0})
-    # if not order:
-    #     raise HTTPException(status_code=404, detail="Sales order not found for this store")
-    if order.get("order_status") != "1":
-        raise HTTPException(status_code=400, detail="Only fulfilled (order_status=1) orders can be returned")
+    if not order:
+        raise HTTPException(status_code=404, detail=f"Sales order not found for order_id: {order_id} and store_id: {store_id}")
+    
+    # Check both status fields - handle both old and new format
+    order_status = order.get("order_status")
+    status = order.get("status")
+    
+    # Order is returnable if either:
+    # - order_status is "1" (old format) OR
+    # - status is "received" (new format)
+    if order_status != "1" and status != "received":
+        current_status = status or order_status
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Order cannot be returned. Current status: {current_status}. Order must be either fulfilled (status=1) or received."
+        )
+    
     return order
 
 # --- Helper function to build return document ---
@@ -132,12 +153,19 @@ def build_return_doc(data, order, products, total_amount, return_id, store_id):
 
 # --- Main function that orchestrates the workflow ---
 async def add_return(data: ReturnOrderRequest, store_id: str):
-    # Fetch sales order
-    order = await fetch_sales_order(data.order_id, store_id)
-
-    products_list = order.get("products", [])
-    if not products_list:
-        raise HTTPException(status_code=404, detail="Product array is missing or empty in Sales Order")
+    try:
+        # Fetch sales order
+        order = await fetch_sales_order(data.order_id, store_id)
+        
+        products_list = order.get("products", [])
+        if not products_list:
+            raise HTTPException(status_code=404, detail="Product array is missing or empty in Sales Order")
+    except HTTPException as e:
+        # Add more context to the error
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=f"Error processing return for order {data.order_id}: {str(e.detail)}"
+        )
 
     enriched_products, total_amount, skipped_products = await enrich_products(
         products_list, data.return_quantity, data.reason
