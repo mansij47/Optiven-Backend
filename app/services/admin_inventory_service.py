@@ -5,6 +5,9 @@ import csv
 import io
 from fastapi.responses import StreamingResponse
 from app.utils.raise_order import _next_id
+from datetime import datetime, timedelta
+from bson import ObjectId
+
 
 
 async def add_product_service(product: Product, store_id: str, org_id: str):
@@ -170,3 +173,169 @@ async def export_inventory_csv(store_id: str, org_id: str):
     return StreamingResponse(output, media_type="text/csv", headers={
         "Content-Disposition": "attachment; filename=inventory_export.csv"
     })
+    
+# ✅ Fetch old products based on month or “older than” filter
+# ✅ Get old products (handles string date format)
+async def get_old_products(store_id: str, month: int = None, older_than_months: int = None):
+    try:
+        query = {"store_id": store_id}
+        cursor = db.Inventory.find(query)
+        all_products = await cursor.to_list(length=None)
+
+        filtered_products = []
+        now = datetime.now()
+
+        # ✅ Case 1: If no filter (just store_id), return all products
+        if not month and not older_than_months:
+            for product in all_products:
+                product["_id"] = str(product.get("_id"))
+            return {
+                "filtered_count": len(all_products),
+                "total_count": len(all_products),
+                "products": all_products,
+                "store_id": store_id,
+                "filter_type": "none",
+                "filter_value": None
+            }
+
+        # ✅ Case 2: Filter by month or age
+        for product in all_products:
+            product["_id"] = str(product.get("_id"))
+
+            last_updated_str = product.get("last_updated")
+            if not last_updated_str:
+                continue
+
+            # --- Flexible datetime parsing ---
+            last_updated_dt = None
+            date_formats = [
+                "%Y-%m-%dT%H:%M:%S.%fZ",   # ISO format with Z
+                "%Y-%m-%dT%H:%M:%S.%f",    # ISO format without Z
+                "%Y-%m-%dT%H:%M:%S",       # ISO format without microseconds
+                "%Y-%m-%d %H:%M:%S.%f",    # space-separated with microseconds
+                "%Y-%m-%d %H:%M:%S"        # space-separated without microseconds
+            ]
+
+            for fmt in date_formats:
+                try:
+                    last_updated_dt = datetime.strptime(last_updated_str, fmt)
+                    break
+                except Exception:
+                    continue
+
+            if not last_updated_dt:
+                continue  # skip if none of the formats matched
+
+            # --- Filtering logic ---
+            if month and last_updated_dt.month == month:
+                filtered_products.append(product)
+            elif older_than_months:
+                threshold_date = now - timedelta(days=older_than_months * 30)
+                if last_updated_dt < threshold_date:
+                    filtered_products.append(product)
+
+        # ✅ Prepare response
+        response = {
+            "filtered_count": len(filtered_products),
+            "total_count": len(all_products),
+            "products": filtered_products,
+            "store_id": store_id,
+            "filter_type": "month" if month else "older_than",
+            "filter_value": month or older_than_months
+        }
+
+        return response
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving old products: {str(e)}")
+
+# ✅ Delete old products (handles string date format)
+async def delete_old_products(store_id: str, month: int = None, older_than_months: int = None):
+    try:
+        query = {"store_id": store_id}
+        cursor = db.Inventory.find(query)
+        all_products = await cursor.to_list(length=None)
+
+        to_delete_ids = []
+        now = datetime.now()
+
+        # ✅ Case 1: If no filter — delete all products from this store
+        if not month and not older_than_months:
+            all_ids = [ObjectId(str(p["_id"])) for p in all_products if "_id" in p]
+            if not all_ids:
+                return {
+                    "deleted_count": 0,
+                    "total_count": len(all_products),
+                    "message": "No products found for this store",
+                    "filter_type": "none",
+                    "filter_value": None
+                }
+
+            result = await db.Inventory.delete_many({"_id": {"$in": all_ids}})
+            return {
+                "deleted_count": result.deleted_count,
+                "total_count": len(all_products),
+                "message": "All products deleted for this store",
+                "filter_type": "none",
+                "filter_value": None
+            }
+
+        # ✅ Case 2: Filtered deletion (month or older_than)
+        date_formats = [
+            "%Y-%m-%dT%H:%M:%S.%fZ",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%d %H:%M:%S"
+        ]
+
+        for product in all_products:
+            last_updated_str = product.get("last_updated")
+            if not last_updated_str:
+                continue
+
+            last_updated_dt = None
+            for fmt in date_formats:
+                try:
+                    last_updated_dt = datetime.strptime(last_updated_str, fmt)
+                    break
+                except Exception:
+                    continue
+
+            if not last_updated_dt:
+                continue
+
+            product_id = str(product["_id"]) if "_id" in product else None
+            if not product_id:
+                continue
+
+            # --- Apply same filter logic ---
+            if month and last_updated_dt.month == month:
+                to_delete_ids.append(ObjectId(product_id))
+            elif older_than_months:
+                threshold_date = now - timedelta(days=older_than_months * 30)
+                if last_updated_dt < threshold_date:
+                    to_delete_ids.append(ObjectId(product_id))
+
+        # ✅ Delete matching products
+        if not to_delete_ids:
+            return {
+                "deleted_count": 0,
+                "total_count": len(all_products),
+                "message": "No products found matching the filter criteria",
+                "filter_type": "month" if month else "older_than",
+                "filter_value": month or older_than_months
+            }
+
+        result = await db.Inventory.delete_many({"_id": {"$in": to_delete_ids}})
+
+        return {
+            "deleted_count": result.deleted_count,
+            "total_count": len(all_products),
+            "message": "Filtered products deleted successfully",
+            "filter_type": "month" if month else "older_than",
+            "filter_value": month or older_than_months
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting old products: {str(e)}")
