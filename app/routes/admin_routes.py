@@ -13,7 +13,7 @@ import os
 from app.models.notification_model import UserInfo, NotificationBase
 from app.models.admin_model import DepartmentUserCreate, DepartmentUserUpdate, EditOrderModel, LoginModel, NewRaiseOrderRequest, Product, RaiseRequestOrderModel, ResetPasswordRequest, SalesOrderModel ,ProductUpdate
 from app.services import notification_service
-from app.services.admin_inventory_service import get_old_products, delete_old_products
+from app.utils.old_product import get_old_products, delete_old_products
 from app.services import admin_lossOrders_service
 from app.services.admin_inventory_service import delete_product_service, update_product_by_id, export_inventory_csv, get_product_by_id, get_all_products, add_product_service 
 # from app.services.admin_lossOrders_service import export_loss_orders_csv, get_all_loss_orders_with_metrics 
