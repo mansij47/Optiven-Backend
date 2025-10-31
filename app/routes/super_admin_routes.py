@@ -13,6 +13,10 @@ from app.models.super_admin_models import (
 from app.services import super_admin_service as svc
 from app.services.super_admin_dashboard import get_dashboard_overview
 
+# Import notification models and service
+from app.models.notification_model import NotificationBase, UserInfo
+from app.services.notification_service import create_notification
+
 router = APIRouter()
 
 # ── AUTH ──────────────────────────────────
@@ -265,7 +269,32 @@ async def remove_subcategory(category_id: str, sub_category_id: str):
 @router.post("/help")
 async def create_help_ticket(data: HelpModel, request: Request):
     user = request.state.user  # Get the user from middleware
+    
+    # Step 1: Create the help ticket
     ticket_id = await svc.submit_help(data, user=user)
+    
+    # Step 2: Prepare sender info for notification
+    sender_info = {
+        "id": user.get("id") or "unknown",
+        "store_id": user.get("store_id"),
+        "role": user.get("role"),
+        "email": user.get("email")
+    }
+    
+    # Step 3: Create Notification object
+    notification = NotificationBase(
+        sender=UserInfo(**sender_info),
+        type_of_notification="Help & Support",
+        title="New Help Ticket Created",
+        message=f"A new help ticket has been submitted: {data.title}"
+    )
+    
+    # Step 4: Send Notification to admins
+    await create_notification(
+        notification=notification,
+        admin=True  # Notify admins
+    )
+    
     return {"message": "Help ticket created", "ticket_id": ticket_id}
 
 @router.get("/allHelp")

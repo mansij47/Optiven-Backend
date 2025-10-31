@@ -3,6 +3,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 # from app.models.super_admin_models import HTTPException, Request, Query, Body
 from app.models.admin_login_model import LoginModel
 # from app.services import admin_login_service as svc
+
 from typing import Optional,List
 from app import db
 import traceback
@@ -12,6 +13,7 @@ import os
 from app.models.notification_model import UserInfo, NotificationBase
 from app.models.admin_model import DepartmentUserCreate, DepartmentUserUpdate, EditOrderModel, LoginModel, NewRaiseOrderRequest, Product, RaiseRequestOrderModel, ResetPasswordRequest, SalesOrderModel ,ProductUpdate
 from app.services import notification_service
+from app.utils.old_product import get_old_products, delete_old_products
 from app.services import admin_lossOrders_service
 from app.services.admin_inventory_service import delete_product_service, update_product_by_id, export_inventory_csv, get_product_by_id, get_all_products, add_product_service 
 # from app.services.admin_lossOrders_service import export_loss_orders_csv, get_all_loss_orders_with_metrics 
@@ -642,3 +644,14 @@ async def get_loss_orders(request: Request):
     store_id = user["store_id"]
 
     return await admin_lossOrders_service.get_loss_orders_by_store(store_id)
+
+@router.get("/get-old-products")
+async def fetch_old_products(store_id: str, month: int = None, older_than_months: int = None):
+    products = await get_old_products(store_id, month, older_than_months)
+    return {"products": products}
+
+
+@router.delete("/delete-old-products")
+async def remove_old_products(store_id: str, month: int = None, older_than_months: int = None):
+    result = await delete_old_products(store_id, month, older_than_months)
+    return result
