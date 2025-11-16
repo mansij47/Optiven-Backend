@@ -57,6 +57,7 @@ class Contract(BaseModel):
     contract_id: Optional[str] = None
     request_id: str
     vendor_name: str
+    vendor_store_name: Optional[str] = None
     vendor_email: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
@@ -83,6 +84,7 @@ class Contract(BaseModel):
 class ContractUpdate(BaseModel):
     contract_id: str= None
     vendor_name: Optional[str]= None
+    vendor_store_name: Optional[str]= None
     vendor_email: Optional[EmailStr]= None
     phone: Optional[str]= None
     address: Optional[str]= None
@@ -259,27 +261,27 @@ class LossOrder(BaseModel):
 
 
 #Inventory
-class Product(BaseModel):
-    org_id: str
-    store_id: str
-    product_id: str
-    product_name: str
-    is_consumer_returnable: bool
-    consumer_return_conditions: List[str]
-    is_seller_returnable: bool
-    seller_return_conditions: List[str]
-    unit_price: str
-    unit: str
-    quantity: int
-    category: str
-    sub_category: str
-    tags: List[str]
-    tax: float
-    has_warranty: bool
-    warranty_tenure: int
-    warranty_unit: str
-    last_updated: str
-    status: Optional[str] = None    
+# class Product(BaseModel):
+#     org_id: str
+#     store_id: str
+#     product_id: str
+#     product_name: str
+#     is_consumer_returnable: bool
+#     consumer_return_conditions: List[str]
+#     is_seller_returnable: bool
+#     seller_return_conditions: List[str]
+#     unit_price: str
+#     unit: str
+#     quantity: int
+#     category: str
+#     sub_category: str
+#     tags: List[str]
+#     tax: float
+#     has_warranty: bool
+#     warranty_tenure: int
+#     warranty_unit: str
+#     last_updated: str
+#     status: Optional[str] = None    
 
 
 class AdminSetupRequest(BaseModel):
@@ -350,11 +352,27 @@ class PurchaseOrderValidationInput(BaseModel):
     is_product_damaged: bool
     selected_action: Optional[str] = None
 
+class ItemDetail(BaseModel):
+    item_name: str
+    serial_no: Optional[str] = None
+    batch_number: Optional[str] = None
+    unit_price: str = "0"
+    # ✅ NEW: Item-level validation fields
+    is_consumer_returnable: Optional[bool] = None
+    consumer_return_conditions: Optional[List[str]] = []
+    is_seller_returnable: Optional[bool] = None
+    seller_return_conditions: Optional[List[str]] = []
+    # ✅ NEW: Item damage status (for semi-damaged)
+    is_damaged: Optional[bool] = False
+
 class PurchaseOrderSubmitRequest(BaseModel):
     order_id: str
     expected_quantity: int
     received_quantity: int
+    min_quantity: Optional[int] = 4
     is_product_damaged: bool
+    is_semi_damaged: Optional[bool] = False  # ✅ NEW: Semi-damaged flag
     selected_action: TargetCollection
     is_consumer_returnable: bool
     consumer_return_conditions: Optional[List[str]] = []
+    items: Optional[List[ItemDetail]] = []  # ✅ Items edited by user

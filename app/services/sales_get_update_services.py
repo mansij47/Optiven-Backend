@@ -132,27 +132,48 @@ async def update_inventory_for_order(order, store_id: str):
         product_id = product.get("product_id")
         order_quantity = int(product.get("order_quantity", 0))  # Correct field
 
-        # Fetch inventory item
-        inventory_item = await db.Inventory.find_one({
-            "product_id": product_id,
-            "store_id": store_id
-        },{"_id": 0})
+        # ✅ Find available items for this product (hierarchical structure)
+        available_items = await db.ProductItems.find(
+            {
+                "product_id": product_id,
+                "store_id": store_id,
+                "status": "available"
+            }
+        ).limit(order_quantity).to_list(order_quantity)
 
-        if not inventory_item:
+        if len(available_items) < order_quantity:
+            # Not enough items available
             continue
 
-        try:
-            current_quantity = int(inventory_item.get("quantity", 0))
-        except (ValueError, TypeError):
-            current_quantity = 0
+        # ✅ Mark each item as sold
+        from datetime import datetime
+        for item in available_items:
+            await db.ProductItems.update_one(
+                {"item_id": item["item_id"]},
+                {
+                    "$set": {
+                        "status": "sold",
+                        "updated_at": datetime.utcnow(),
+                        "sold_order_id": order.get("order_id")
+                    }
+                }
+            )
 
-        # Calculate new quantity
-        new_quantity = max(current_quantity - order_quantity, 0)
+        # ✅ Update product quantity (count remaining available items)
+        remaining_items = await db.ProductItems.count_documents({
+            "product_id": product_id,
+            "store_id": store_id,
+            "status": "available"
+        })
 
-        # Update inventory
         await db.Inventory.update_one(
             {"product_id": product_id, "store_id": store_id},
-            {"$set": {"quantity": new_quantity}}
+            {
+                "$set": {
+                    "quantity": remaining_items,
+                    "updated_at": datetime.utcnow()
+                }
+            }
         )
 
 async def mark_order_status_as_sold(order_id: str, store_id: str):

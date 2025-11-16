@@ -33,7 +33,7 @@ from app.models.procurement_models import LossOrder
 from app.services import procurement_loss_services
 
 from app.services.procurement_inventory_services import add_product_service,get_all_products,get_product_by_id,update_product_by_id,delete_product_service
-from app.models.procurement_models import Product
+from app.models.admin_model import Product  # Use Admin Product model for hierarchical structure
 
 from app.models.procurement_models import AdminSetupRequest
 from app.services import procurement_setup_services
@@ -50,6 +50,7 @@ from app.models.procurement_models import VendorModel,VendorUpdate
 from app.services import vendor_service as svc
 from app.models.procurement_models import PurchaseOrderValidationInput, PurchaseOrderValidationRequest ,PurchaseOrderSubmitRequest
 from app.services import procurement_validation_services
+from app.services.procurement_requestedOrder_service import delete_requested_order
 
 
 
@@ -133,6 +134,19 @@ async def delete_vendor(vendor_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Vendor not found")
     return {"message": "Vendor deleted successfully"}
 
+# GET VENDOR HISTORY
+@router.get("/vendors/{vendor_id}/history")
+async def get_vendor_history_route(vendor_id: str, request: Request):
+    user = request.state.user
+    if not user or user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    from app.services.vendor_history_service import get_vendor_history
+    history = await get_vendor_history(vendor_id, request)
+    if not history:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    return history
+
 
 #RequestedOrders
 @router.get("/requested-orders")
@@ -143,6 +157,12 @@ async def get_orders(request: Request):
         raise HTTPException(status_code=403, detail="Only procurement and admin users are allowed.")
     storeId = user.get("store_id")
     return await procurement_requestedOrder_service.get_all_requested_orders(storeId)
+
+#delete requested order
+@router.delete("/requested-orders/{order_id}")
+async def delete_requested_order_route(order_id: str):
+    response = await delete_requested_order(order_id)
+    return response
 
 
 # Add contract route
@@ -156,6 +176,10 @@ async def add_contract_route(contract: Contract, request: Request):
         store_id = user.get("store_id")
         return await add_contract(contract, store_id, request)
 
+    except HTTPException:
+        # Re-raise HTTPException as is (includes 400, 403, etc.)
+        raise
+    
     except ValidationError as e:
         logging.error("Validation error in route: %s", e.json())
         raise HTTPException(status_code=422, detail="Contract validation failed.")

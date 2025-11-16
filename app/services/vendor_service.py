@@ -4,6 +4,7 @@ from uuid import uuid4
 from app.db import db  # Mongo connection
 from bson import ObjectId
 from fastapi import Request, Query
+from app.utils.vendor_utils import generate_vendor_id
 
 VENDOR_COLLECTION = db.Vendors
 
@@ -34,7 +35,9 @@ async def create_vendor(vendor_data: VendorModel, request: Request):
         raise ValueError("User context missing. Ensure auth middleware is working.")
 
     vendor_dict = vendor_data.dict()
-    vendor_dict["vendor_id"] = str(uuid4())  # or custom VEN001 pattern
+    
+    # Generate sequential vendor_id (VEN001, VEN002, etc.)
+    vendor_dict["vendor_id"] = await generate_vendor_id()
     vendor_dict["created_at"] = datetime.utcnow()
     vendor_dict["updated_at"] = datetime.utcnow()
 

@@ -11,6 +11,7 @@ from app.utils.auth import verify_password, create_access_token
  
 from app.services.vendor_service import create_vendor
 from app.models.procurement_models import VendorModel
+from app.utils.vendor_utils import get_or_create_vendor_id
 
 from app.models.procurement_models import ContractUpdate  # Your Pydantic model
 
@@ -31,31 +32,71 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
     if existing:
         raise HTTPException(status_code=400, detail="Contract with this ID already exists.")
 
+    # ✅ Check for existing active contract with same vendor and product for this request
+    duplicate_contract = await contracts_collection.find_one({
+        "request_id": contract_data.request_id,
+        "vendor_name": contract_data.vendor_name,
+        "product_name": contract_data.product_name,
+        "store_id": store_id,
+        "status": {"$in": ["pending", "accept"]}  # Check for active contracts only
+    })
+    
+    # ✅ If contract exists, UPDATE quantity instead of creating duplicate
+    if duplicate_contract:
+        existing_quantity = duplicate_contract.get("quantity", 0)
+        new_quantity = existing_quantity + (contract_data.quantity or 0)
+        
+        # Update the existing contract with new quantity and latest details
+        await contracts_collection.update_one(
+            {"_id": duplicate_contract["_id"]},
+            {"$set": {
+                "quantity": new_quantity,
+                "unit_price": contract_data.unit_price,
+                "tax": contract_data.tax,
+                "date_of_delivery": contract_data.date_of_delivery,
+                "warranty_tenure": contract_data.warranty_tenure,
+                "warranty_unit": contract_data.warranty_unit,
+                "returnable": contract_data.returnable,
+                "return_conditions": contract_data.return_conditions,
+                "is_damage_returnable": contract_data.is_damage_returnable,
+            }}
+        )
+        
+        return {
+            "message": f"Contract updated successfully. Quantity increased from {existing_quantity} to {new_quantity}.",
+            "contract_id": duplicate_contract.get("contract_id"),
+            "previous_quantity": existing_quantity,
+            "new_quantity": new_quantity,
+            "was_updated": True
+        }
+
     try:
         vendor_id = None
 
-        # ✅ Check vendor existence before creating
-        if contract_data.vendor_name and contract_data.gst_number:
+        # ✅ Check vendor existence by vendor_name only
+        if contract_data.vendor_name:
+            # Get or create vendor_id based on vendor_name
+            vendor_id = await get_or_create_vendor_id(contract_data.vendor_name)
+            
+            # Check if vendor with this name already exists in Vendors collection
             existing_vendor = await VENDOR_COLLECTION.find_one(
-                {"vendor_name": contract_data.vendor_name, "gst_number": contract_data.gst_number},
+                {"vendor_name": contract_data.vendor_name},
                 {"vendor_id": 1, "_id": 0}
             )
-            if existing_vendor:
-                vendor_id = existing_vendor["vendor_id"]
-            else:
-                # Call create_vendor to insert vendor
+            
+            if not existing_vendor:
+                # Vendor doesn't exist, create new vendor with this vendor_id
                 vendor_payload = VendorModel(
                     vendor_name=contract_data.vendor_name,
-                    email=contract_data.vendor_email,   # fixed
+                    email=contract_data.vendor_email,
                     phone_number=contract_data.phone,
-                    vendor_store_name=None,  # or fallback
+                    vendor_store_name=None,
                     vendor_store_address=contract_data.address,
                     pincode=contract_data.pincode,
                     gst_number=contract_data.gst_number,
                     business_type=contract_data.business_type,
-)
-
-                vendor_id = await create_vendor(vendor_payload, request)
+                )
+                await create_vendor(vendor_payload, request)
 
         # ✅ Insert contract with vendor_id
         contract_dict = contract_data.model_dump()
@@ -71,9 +112,15 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
             "contract_id": contract_dict["contract_id"],
         }
 
+    except HTTPException:
+        # Re-raise HTTPException as is
+        raise
     except Exception as e:
         logging.error("Error inserting contract: %s", str(e))
-        raise HTTPException(status_code=500, detail="Could not insert contract.")
+        logging.error("Exception type: %s", type(e).__name__)
+        import traceback
+        logging.error("Traceback: %s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Could not insert contract: {str(e)}")
 
 #Update contract
 async def update_contract(contract_id: str, store_id: str, updated_data: dict):
@@ -114,6 +161,7 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
             purchase_order = {
                 "order_id": f"PO{contract_id[-4:]}",
                 "contract_id": contract_id,
+                "vendor_id": contract.get("vendor_id"),  # Add vendor_id from contract
                 "vendor_name": contract["vendor_name"],
                 "delivery_date": contract["date_of_delivery"],
                 "validation_status": "Pending",

@@ -11,11 +11,11 @@ from jose import jwt, JWTError
 from bson import ObjectId
 import os
 from app.models.notification_model import UserInfo, NotificationBase
-from app.models.admin_model import DepartmentUserCreate, DepartmentUserUpdate, EditOrderModel, LoginModel, NewRaiseOrderRequest, Product, RaiseRequestOrderModel, ResetPasswordRequest, SalesOrderModel ,ProductUpdate
+from app.models.admin_model import DepartmentUserCreate, DepartmentUserUpdate, EditOrderModel, LoginModel, NewRaiseOrderRequest, Product, RaiseRequestOrderModel, ResetPasswordRequest, SalesOrderModel
 from app.services import notification_service
 from app.utils.old_product import get_old_products, delete_old_products
 from app.services import admin_lossOrders_service
-from app.services.admin_inventory_service import delete_product_service, update_product_by_id, export_inventory_csv, get_product_by_id, get_all_products, add_product_service 
+from app.services.admin_inventory_service import delete_product_service, update_product_by_id, export_inventory_csv, get_product_by_id, get_all_products, add_product_service, get_item_by_id 
 # from app.services.admin_lossOrders_service import export_loss_orders_csv, get_all_loss_orders_with_metrics 
 from app.services.admin_lossOrders_service import  get_loss_data_by_user
 from app.services.admin_receivedOrders_service import delete_order_by_id, get_all_sales_orders, update_sales_order
@@ -236,8 +236,56 @@ async def fetch_product_by_id(request: Request, product_id: str):
         raise HTTPException(status_code=400, detail="Store ID missing in token.")
     return await get_product_by_id(product_id, store_id)  
 
+@router.get("/item/{item_id}")
+async def fetch_item_by_id(request: Request, item_id: str):
+    """
+    Fetch individual item details by item_id
+    """
+    user = request.state.user
+
+    if user.get("role") not in ["admin", "procurement", "sales"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Access denied.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+    
+    result = await get_item_by_id(item_id, store_id)
+    return result.get("item")
+
+@router.get("/check-serial-number/{serial_no}")
+async def check_serial_number_exists(request: Request, serial_no: str):
+    """
+    Check if a serial number already exists in the system
+    Returns: {"exists": true/false, "item_id": "...", "product_name": "..."}
+    """
+    user = request.state.user
+
+    if user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Access denied.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+    
+    # Check if serial number exists
+    existing_item = await db.db.ProductItems.find_one({
+        "serial_no": serial_no,
+        "store_id": store_id
+    })
+    
+    if existing_item:
+        return {
+            "exists": True,
+            "item_id": existing_item.get("item_id"),
+            "product_name": existing_item.get("item_name"),
+            "message": f"Serial number {serial_no} already exists"
+        }
+    
+    return {"exists": False, "message": "Serial number is available"}
+
 @router.patch("/edit/product/{product_id}")
-async def edit_product_patch(request: Request, product_id: str, data: ProductUpdate):
+async def edit_product_patch(request: Request, product_id: str, data: Product.ProductUpdateModel):
     # Admin role check
     user = request.state.user
     if user.get("role") not in ["admin"]:

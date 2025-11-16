@@ -37,7 +37,7 @@ async def validate_purchase_order_preview(
         "category": order.get("category"),
         "product_name": order.get("product_name"),
         "sub_category": order.get("sub_category"),
-        "has_warranty": order.get("has_warranty", False),
+        "has_warranty": order.get("has_warranty", False) or (order.get("warranty_tenure", 0) > 0),
         "warranty_tenure": order.get("warranty_tenure", 0),
         "warranty_unit": order.get("warranty_unit", "months"),
         "tax": order.get("tax", 0),
@@ -218,31 +218,227 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
     if not base_order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    # --- INVENTORY CASE ---
-    if data.selected_action == "Inventory":
-        final_doc = {
-            "product_id": generate_id("PRD"),
-            "org_id": org_id,
+    # --- INVENTORY CASE (includes semi-damaged items) ---
+    if data.selected_action == "Inventory" or data.is_semi_damaged:
+        # ✅ Use admin Product model structure
+        from app.models.admin_model import Product
+        from app.utils.raise_order import _next_id
+        
+        # ✅ Check if product already exists in inventory
+        existing_product = await db.Inventory.find_one({
             "store_id": store_id,
             "product_name": base_order.get("product_name"),
-            "is_consumer_returnable": data.is_consumer_returnable,
-            "consumer_return_conditions": data.consumer_return_conditions,
-            "is_seller_returnable": base_order.get("returnable", False),
-            "seller_return_conditions": base_order.get("return_conditions", []),
-            "unit_price": str(base_order.get("unit_price", "0")),
-            "unit": base_order.get("unit"),
-            "quantity": data.received_quantity,
-            "category": base_order.get("category"),
-            "sub_category": base_order.get("sub_category", ""),
-            "tags": [],
-            "tax": float(base_order.get("tax", 0)),
-            "has_warranty": base_order.get("has_warranty", False),
-            "warranty_tenure": base_order.get("warranty_tenure", 0),
-            "warranty_unit": base_order.get("warranty_unit", "months"),
-            "last_updated": str(datetime.now()),
-            "status": "active",
+            "category": base_order.get("category")
+        })
+        
+        if existing_product:
+            # Product exists - UPDATE it
+            product_id = existing_product.get("product_id")
+            
+            # Calculate new quantity (existing + received)
+            existing_quantity = existing_product.get("quantity", 0)
+            new_quantity = existing_quantity + data.received_quantity
+            
+            # Update existing product (average_price will be calculated after items are added)
+            await db.Inventory.update_one(
+                {"product_id": product_id, "store_id": store_id},
+                {
+                    "$set": {
+                        "quantity": new_quantity,
+                        "min_stock": data.min_quantity or existing_product.get("min_stock", 4),
+                        "status": "Stock-in",
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+            )
+        else:
+            # Product doesn't exist - CREATE new one
+            product_id = await _next_id(db.Inventory, "product_id", "PROD", store_id)
+            
+            # Create Product using admin model (clean structure) 
+            product_dict = {
+                "org_id": org_id,
+                "store_id": store_id,
+                "product_id": product_id,
+                "product_name": base_order.get("product_name"),
+                "unit": base_order.get("unit"),
+                "quantity": data.received_quantity,
+                "average_price": 0.0,  # Will be calculated after items are added
+                "category": base_order.get("category"),
+                "sub_category": base_order.get("sub_category", ""),
+                "tags": [],
+                "tax": float(base_order.get("tax", 0)),
+                "min_stock": data.min_quantity or 4,
+                "status": "Stock-in",
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }
+            
+            # Insert product into Inventory
+            await db.Inventory.insert_one(product_dict)
+        
+        # ✅ Create individual ProductItems with user-edited details from frontend
+        items_created = []
+        damaged_items_for_loss = []
+        damaged_items_for_return = []
+        good_items_count = 0
+        
+        # Use items from frontend if provided, otherwise create default items
+        items_to_create = data.items if data.items else []
+        
+        # If no items provided from frontend, create default items
+        if not items_to_create:
+            items_to_create = [
+                {
+                    "item_name": f"{base_order.get('product_name')}",
+                    "serial_no": None,
+                    "batch_number": None,
+                    "unit_price": str(base_order.get("unit_price", "0")),
+                    "is_damaged": False
+                }
+                for i in range(data.received_quantity)
+            ]
+        
+        for i, item_detail in enumerate(items_to_create):
+            # ✅ Check if item is damaged (for semi-damaged case)
+            item_is_damaged = item_detail.get("is_damaged", False) if isinstance(item_detail, dict) else getattr(item_detail, "is_damaged", False)
+            
+            # ✅ Handle damaged items separately
+            if data.is_semi_damaged and item_is_damaged:
+                # Damaged item - check if returnable
+                item_is_seller_returnable = item_detail.get("is_seller_returnable") if isinstance(item_detail, dict) else getattr(item_detail, "is_seller_returnable", base_order.get("returnable", False))
+                
+                if item_is_seller_returnable:
+                    # Add to return to vendor list
+                    damaged_items_for_return.append(item_detail)
+                else:
+                    # Add to loss orders list
+                    damaged_items_for_loss.append(item_detail)
+                continue  # Skip adding to inventory
+            
+            # ✅ Good items go to inventory
+            item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
+            
+            # ✅ Extract validation fields from item if available, else fallback to product-level
+            if isinstance(item_detail, dict):
+                # Dictionary format
+                item_is_consumer_returnable = item_detail.get("is_consumer_returnable", data.is_consumer_returnable)
+                item_consumer_return_conditions = item_detail.get("consumer_return_conditions", data.consumer_return_conditions or [])
+                item_is_seller_returnable = item_detail.get("is_seller_returnable", base_order.get("returnable", False))
+                item_seller_return_conditions = item_detail.get("seller_return_conditions", base_order.get("return_conditions", []))
+            else:
+                # Object format (Pydantic model)
+                item_is_consumer_returnable = getattr(item_detail, "is_consumer_returnable", data.is_consumer_returnable)
+                item_consumer_return_conditions = getattr(item_detail, "consumer_return_conditions", data.consumer_return_conditions or [])
+                item_is_seller_returnable = getattr(item_detail, "is_seller_returnable", base_order.get("returnable", False))
+                item_seller_return_conditions = getattr(item_detail, "seller_return_conditions", base_order.get("return_conditions", []))
+            
+            item_data = {
+                "org_id": org_id,
+                "store_id": store_id,
+                "item_id": item_id,
+                "product_id": product_id,
+                "item_name": item_detail.get("item_name") if isinstance(item_detail, dict) else item_detail.item_name,
+                "unit_price": item_detail.get("unit_price") if isinstance(item_detail, dict) else item_detail.unit_price,
+                "vendor_id": base_order.get("vendor_id"),
+                "vendor_name": base_order.get("vendor_name"),
+                "serial_no": item_detail.get("serial_no") if isinstance(item_detail, dict) else item_detail.serial_no,
+                "batch_number": item_detail.get("batch_number") if isinstance(item_detail, dict) else item_detail.batch_number,
+                # ✅ NOW using item-level validation fields!
+                "is_consumer_returnable": item_is_consumer_returnable,
+                "consumer_return_conditions": item_consumer_return_conditions,
+                "is_seller_returnable": item_is_seller_returnable,
+                "seller_return_conditions": item_seller_return_conditions,
+                "has_warranty": base_order.get("has_warranty", False) or (base_order.get("warranty_tenure", 0) > 0),
+                "warranty_tenure": base_order.get("warranty_tenure", 0),
+                "warranty_unit": base_order.get("warranty_unit", "months"),
+                "status": "available",
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }
+            
+            await db.ProductItems.insert_one(item_data)
+            items_created.append(item_id)
+            good_items_count += 1
+        
+        # ✅ Handle damaged items for Loss Orders
+        if damaged_items_for_loss:
+            loss_doc = {
+                "product_id": generate_id("LOSS"),
+                "org_id": org_id,
+                "store_id": store_id,
+                "product_name": base_order.get("product_name"),
+                "category": base_order.get("category"),
+                "date_reported": str(datetime.now().date()),
+                "quantity_lost": len(damaged_items_for_loss),
+                "unit": base_order.get("unit"),
+                "unit_price": str(base_order.get("unit_price", "0")),
+                "reason": "Damaged & Not Returnable (Semi-Damaged Batch)",
+            }
+            await db["LossOrders"].insert_one(loss_doc)
+        
+        # ✅ Handle damaged items for Return to Vendor
+        if damaged_items_for_return:
+            return_doc = {
+                "return_id": generate_id("RTV"),
+                "order_id": data.order_id,
+                "vendor_name": base_order.get("vendor_name"),
+                "product_name": base_order.get("product_name"),
+                "delivery_date": base_order.get("delivery_date"),
+                "status": 1,
+                "return_amount": str(len(damaged_items_for_return) * float(base_order.get("unit_price", 0))),
+                "original_quantity": data.expected_quantity,
+                "return_quantity": len(damaged_items_for_return),
+                "unit": base_order.get("unit"),
+                "contract_id": base_order.get("contract_id"),
+                "purchase_date": str(datetime.now().date()),
+                "product_condition": "Damaged (Semi-Damaged Batch)",
+                "total_price": int(len(damaged_items_for_return) * float(base_order.get("unit_price", 0))),
+                "unit_price": int(base_order.get("unit_price", 0)),
+                "return_reason": "Damaged on Delivery",
+                "store_id": store_id,
+                "org_id": org_id,
+            }
+            await db["ReturnToVendor"].insert_one(return_doc)
+        
+        # ✅ Calculate and update average_price after items are created
+        from app.services.admin_inventory_service import calculate_average_price
+        average_price = await calculate_average_price(product_id, store_id)
+        await db.Inventory.update_one(
+            {"product_id": product_id, "store_id": store_id},
+            {"$set": {"average_price": average_price, "updated_at": datetime.utcnow()}}
+        )
+        
+        # Get updated product quantity
+        updated_product = await db.Inventory.find_one({"product_id": product_id, "store_id": store_id})
+        total_quantity = updated_product.get("quantity", 0) if updated_product else 0
+        
+        # ✅ Detailed message for semi-damaged
+        if data.is_semi_damaged:
+            message_parts = []
+            if good_items_count > 0:
+                message_parts.append(f"{good_items_count} good items added to Inventory")
+            if damaged_items_for_loss:
+                message_parts.append(f"{len(damaged_items_for_loss)} damaged items sent to Loss Orders")
+            if damaged_items_for_return:
+                message_parts.append(f"{len(damaged_items_for_return)} damaged items sent to Return to Vendor")
+            
+            final_message = " | ".join(message_parts)
+        else:
+            final_message = f"{'Product updated' if existing_product else 'Product added'} in inventory with {data.received_quantity} new items (Total: {total_quantity})"
+        
+        final_doc = {
+            "product_id": product_id,
+            "message": final_message,
+            "items_created": items_created,
+            "total_quantity": total_quantity,
+            "average_price": average_price,
+            "good_items_count": good_items_count,
+            "damaged_items_loss": len(damaged_items_for_loss),
+            "damaged_items_return": len(damaged_items_for_return),
+            "was_update": bool(existing_product)
         }
-        target_collection = db["Inventory"]
+        target_collection = None  # We already inserted above
 
     # --- LOSS ORDERS CASE ---
     elif data.selected_action == "LossOrders":
@@ -287,9 +483,10 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
     else:
         raise HTTPException(status_code=400, detail="Invalid selected_action")
 
-    # Insert document into target collection
-    result = await target_collection.insert_one(final_doc)
-    final_doc["_id"] = str(result.inserted_id)
+    # Insert document into target collection (only for Loss and Return to Vendor)
+    if target_collection is not None:
+        result = await target_collection.insert_one(final_doc)
+        final_doc["_id"] = str(result.inserted_id)
 
     # --- Update PurchaseOrder validation_status to "completed" ---
     await db["PurchaseOrders"].update_one(
