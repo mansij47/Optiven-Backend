@@ -40,10 +40,12 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
     if not inventory_item:
         raise HTTPException(status_code=404, detail="Product not found in inventory.")
 
-    try:
-        inventory_quantity = int(inventory_item.get("quantity", 0))
-    except (ValueError, TypeError):
-        inventory_quantity = 0
+    # ✅ Count available items from ProductItems (not Inventory.quantity)
+    inventory_quantity = await db.ProductItems.count_documents({
+        "product_id": inventory_item.get("product_id"),
+        "store_id": store_id,
+        "status": "available"
+    })
 
     requested_quantity = max(order_quantity - inventory_quantity, 0)
     if requested_quantity <= 0:

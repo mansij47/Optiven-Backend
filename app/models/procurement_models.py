@@ -216,6 +216,7 @@ class ReturnOrderSummary(BaseModel):
     product_name: str
     customer_name: str
     returned_amount: float
+    status: str = "pending"
     action: str = "view"
 
 

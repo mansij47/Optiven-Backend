@@ -327,13 +327,13 @@ async def mark_as_received(order_id: str):
 
 #List of  Return orders from sales
 @router.get("/return-orders", response_model=List[ReturnOrderSummary], tags=["Return Orders"])
-async def get_all_return_orders(request: Request):
+async def get_all_return_orders(request: Request, status: str = "all"):
     user = request.state.user
     if user.get("role") != "procurement":
         raise HTTPException(status_code=403, detail="Forbidden: procurement access required.")
     
     store_id = user.get("store_id")
-    return await procurement_salesreturn_services.get_return_orders_for_table_view(store_id)
+    return await procurement_salesreturn_services.get_return_orders_for_table_view(store_id, status)
 
 
 #Veiw the details of Return orders 

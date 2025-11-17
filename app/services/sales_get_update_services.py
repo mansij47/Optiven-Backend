@@ -5,6 +5,7 @@ from app.services.sales_add_raise_services import fetch_inventory_details
 from fastapi import HTTPException
 from app.utils.sales_utils import build_product_detail, parse_return_status, parse_status_string
 from bson.son import SON
+from datetime import datetime
 # async def get_all_sales_orders(store_id: str):
 #     orders = await db.SalesOrders.find(
 #         {"order_status": "0", "store_id": store_id},
@@ -75,18 +76,15 @@ async def get_all_sales_orders(store_id: str):
             product_id = product.get("product_id")
             ordered_quantity = int(product.get("order_quantity", 0))
 
-            # Fetch inventory record
-            inventory_item = await db.Inventory.find_one(
-                {"store_id": store_id, "product_id": product_id}
-            )
+            # ✅ Count available items from ProductItems collection (this is the source of truth)
+            available_items_count = await db.ProductItems.count_documents({
+                "product_id": product_id,
+                "store_id": store_id,
+                "status": "available"
+            })
 
-            try:
-                inventory_quantity = int(inventory_item.get("quantity", 0)) if inventory_item else 0
-            except (ValueError, TypeError):
-                inventory_quantity = 0
-
-            # Determine product_status
-            product_status = "Stock-out" if inventory_quantity < ordered_quantity else "Stock-in"
+            # Determine product_status based on available items
+            product_status = "Stock-out" if available_items_count < ordered_quantity else "Stock-in"
             product["product_status"] = product_status
             updated_products.append(product)
 
@@ -146,17 +144,34 @@ async def update_inventory_for_order(order, store_id: str):
             continue
 
         # ✅ Mark each item as sold
-        from datetime import datetime
         for item in available_items:
-            await db.ProductItems.update_one(
-                {"item_id": item["item_id"]},
-                {
-                    "$set": {
-                        "status": "sold",
-                        "updated_at": datetime.utcnow(),
-                        "sold_order_id": order.get("order_id")
+            # ✅ Preserve previous sales history by using $push to add to sales_history array
+            # If item was previously sold and returned, we keep that history
+            update_data = {
+                "$set": {
+                    "status": "sold",
+                    "updated_at": datetime.utcnow(),
+                    "sold_order_id": order.get("order_id"),
+                    "sold_at": datetime.utcnow()
+                }
+            }
+            
+            # If item has previous sale history (was returned), archive it
+            if item.get("sold_order_id") and item.get("sold_order_id") != order.get("order_id"):
+                # Initialize sales_history array if it doesn't exist, then add previous sale
+                update_data["$push"] = {
+                    "sales_history": {
+                        "previous_order_id": item.get("sold_order_id"),
+                        "previous_sold_at": item.get("sold_at"),
+                        "returned_at": item.get("returned_at"),
+                        "return_reason": item.get("return_reason"),
+                        "archived_at": datetime.utcnow()
                     }
                 }
+            
+            await db.ProductItems.update_one(
+                {"item_id": item["item_id"]},
+                update_data
             )
 
         # ✅ Update product quantity (count remaining available items)
@@ -273,12 +288,18 @@ async def get_all_products(store_id: str):
 
         products = []
         async for product in products_cursor:
-            try:
-                quantity = int(product.get("quantity", 0))
-            except (ValueError, TypeError):
-                quantity = 0
-
-            product["status"] = "Stock-in" if quantity > 0 else "Stock-out"
+            product_id = product.get("product_id")
+            
+            # ✅ Count available items from ProductItems collection
+            available_items_count = await db.ProductItems.count_documents({
+                "product_id": product_id,
+                "store_id": store_id,
+                "status": "available"
+            })
+            
+            # Update quantity to reflect actual available items
+            product["quantity"] = available_items_count
+            product["status"] = "Stock-in" if available_items_count > 0 else "Stock-out"
             products.append(product)
 
         return products
@@ -334,8 +355,20 @@ async def mark_return_sent_to_procurement(return_id: str, store_id: str):
 
     return {"message": f"Return order {return_id} marked as sent to procurement"}
 
-async def get_all_procurement_returns(store_id: str):
-    cursor = db.ReturnOrders.find({"sent_to_procurement": 1,"store_id": store_id},{"_id":0}).sort([("_id", -1)])
+async def get_all_procurement_returns(store_id: str, status_filter: str = "all"):
+    query = {"sent_to_procurement": 1, "store_id": store_id}
+    
+    # Add status filter if not "all"
+    if status_filter == "pending":
+        # Match documents with status="pending" OR status field doesn't exist (old records)
+        query["$or"] = [
+            {"status": "pending"},
+            {"status": {"$exists": False}}
+        ]
+    elif status_filter == "completed":
+        query["status"] = "completed"
+    
+    cursor = db.ReturnOrders.find(query, {"_id": 0}).sort([("_id", -1)])
     result = []
     async for r in cursor:
         result.append(r)  # Append the entire document as it is
@@ -357,21 +390,76 @@ async def get_product_details_service(store_id: str, product_id: Optional[str] =
         query["product_name"] = product_name
 
     product = await db.Inventory.find_one(query, {"_id": 0})
-    print(product.get("consumer_return_conditions", "No specific conditions"))
 
     if not product:
         raise HTTPException(status_code=404, detail="Product not found for this store")
+
+    # ✅ Get available items count from ProductItems
+    available_items_count = await db.ProductItems.count_documents({
+        "product_id": product.get("product_id"),
+        "store_id": store_id,
+        "status": "available"
+    })
+
+    # ✅ Calculate average price from ProductItems
+    items_cursor = db.ProductItems.find({
+        "product_id": product.get("product_id"),
+        "store_id": store_id,
+        "status": "available"
+    }, {"unit_price": 1, "_id": 0})
+    
+    items = await items_cursor.to_list(length=None)
+    
+    # Calculate average price - handle string values and zeros
+    average_price = 0.0
+    if items:
+        total_price = 0.0
+        valid_count = 0
+        
+        for item in items:
+            try:
+                price_value = item.get("unit_price", 0)
+                # Convert string to float if needed
+                if isinstance(price_value, str):
+                    price_value = float(price_value) if price_value and price_value != "0" else 0.0
+                else:
+                    price_value = float(price_value)
+                
+                if price_value > 0:
+                    total_price += price_value
+                    valid_count += 1
+            except (ValueError, TypeError):
+                continue
+        
+        if valid_count > 0:
+            average_price = round(total_price / valid_count, 2)
+    
+    # If still 0, try to get from Inventory table
+    if average_price == 0:
+        try:
+            inv_price = product.get("unit_price", 0)
+            if isinstance(inv_price, str):
+                average_price = float(inv_price) if inv_price and inv_price != "0" else 0.0
+            else:
+                average_price = float(inv_price)
+        except (ValueError, TypeError):
+            average_price = 0.0
+
+    # ✅ Ensure consumer_return_conditions is always a list
+    consumer_conditions = product.get("consumer_return_conditions", [])
+    if isinstance(consumer_conditions, str):
+        consumer_conditions = [consumer_conditions] if consumer_conditions else []
 
     return ProductDetails(
         product_id=product.get("product_id"),
         product_name=product.get("product_name"),
         category=product.get("category"),
-        price=float(product.get("unit_price", 0)),
-        quantity_available=product.get("quantity", 0),
+        price=average_price,
+        quantity_available=available_items_count,
         unit=product.get("unit", "pcs"),
         store_id=product.get("store_id"),
         tax=product.get("tax", 0),
-        consumer_return_conditions=product.get("consumer_return_conditions", "No specific conditions")
+        consumer_return_conditions=consumer_conditions
     )
 
 async def get_sales_order_by_id(order_id: str, store_id: str):
@@ -393,18 +481,15 @@ async def get_sales_order_by_id(order_id: str, store_id: str):
         product_id = product.get("product_id")
         ordered_quantity = int(product.get("order_quantity", 0))
 
-        inventory_item = await db.Inventory.find_one({
+        # ✅ Count available items from ProductItems collection
+        available_items_count = await db.ProductItems.count_documents({
+            "product_id": product_id,
             "store_id": store_id,
-            "product_id": product_id
+            "status": "available"
         })
 
-        try:
-            inventory_quantity = int(inventory_item.get("quantity", 0)) if inventory_item else 0
-        except (ValueError, TypeError):
-            inventory_quantity = 0
-
-        # Determine product status
-        product_status = "Stock-out" if inventory_quantity < ordered_quantity else "Stock-in"
+        # Determine product status based on available items
+        product_status = "Stock-out" if available_items_count < ordered_quantity else "Stock-in"
         product["product_status"] = product_status
         updated_products.append(product)
 

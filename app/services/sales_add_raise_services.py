@@ -175,6 +175,7 @@ def build_return_doc(data, order, products, total_amount, return_id, store_id):
         "reason": data.reason,
         "returned_amount": round(total_amount, 2),
         "sent_to_procurement": 0,
+        "status": "pending",
         "store_id": store_id
     }
 

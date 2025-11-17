@@ -52,14 +52,36 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
             is_seller_returnable=is_seller_returnable
         )
         
-        # Delete the return order after processing
-        await return_orders_collection.delete_one({
-            "return_id": data.return_id,
-            "store_id": store_id
-        })
+        # Update status to completed after processing
+        await return_orders_collection.update_one(
+            {
+                "return_id": data.return_id,
+                "store_id": store_id
+            },
+            {
+                "$set": {
+                    "status": "completed",
+                    "processed_at": datetime.now()
+                }
+            }
+        )
+        
+        # ✅ Create detailed message based on destination
+        destination = result.get("destination", "Unknown")
+        product_name = product.get("product_name", "Product")
+        return_qty = product.get("return_quantity", 1)
+        
+        if destination == "Inventory":
+            message = f"✅ Customer return processed: {return_qty} unit(s) of {product_name} returned to Inventory (Available for resale)"
+        elif destination == "LossOrders":
+            message = f"⚠️ Customer return processed: {return_qty} unit(s) of {product_name} marked as Loss (Damaged & Not Returnable to Vendor)"
+        elif destination == "ReturnToVendor":
+            message = f"📦 Customer return processed: {return_qty} unit(s) of {product_name} marked for Return to Vendor (Damaged & Returnable)"
+        else:
+            message = f"Customer return processed successfully with item tracking"
         
         return {
-            "message": "Customer return processed successfully with item tracking",
+            "message": message,
             "details": result
         }
 
@@ -103,7 +125,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
             },
             upsert=True
         )
-        action = "Updated/Added in ReturnToVendor"
+        action = f"📦 Return to Vendor: {product['return_quantity']} unit(s) of {product['product_name']} marked for vendor return (Damaged & Returnable)"
 
     # ✅ CASE 2: Product Damage & NOT Seller Returnable → LossOrders
     elif reason == "Damage on arrival" and is_seller_returnable:
@@ -122,7 +144,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
             },
             upsert=True
         )
-        action = "Updated/Added in LossOrders"
+        action = f"⚠️ Loss Orders: {product['return_quantity']} unit(s) of {product['product_name']} added to Loss Sheet (Damaged & Not Returnable)"
 
     # ✅ CASE 3: Not Product Damage → Inventory (with hierarchical structure)
     else:
@@ -216,12 +238,20 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
             await db.ProductItems.insert_one(item_data)
             items_created.append(item_id)
         
-        action = f"Updated/Added in Inventory with {len(items_created)} items created"
+        action = f"✅ Added to Inventory: {len(items_created)} item(s) of {product_name} added to Inventory (Available for sale)"
 
-    # ✅ Delete the return order after processing
-    await return_orders_collection.delete_one({
-        "return_id": data.return_id,
-        "store_id": store_id
-    })
+    # ✅ Update status to completed after processing
+    await return_orders_collection.update_one(
+        {
+            "return_id": data.return_id,
+            "store_id": store_id
+        },
+        {
+            "$set": {
+                "status": "completed",
+                "processed_at": datetime.now()
+            }
+        }
+    )
 
-    return {"message": f"Validation successful. {action}."}
+    return {"message": f"Validation successful. {action}"}

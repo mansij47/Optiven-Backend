@@ -288,13 +288,13 @@ async def mark_as_sent_to_procurement(return_id: str, request: Request):
     return result
  
 @router.get("/procurement/returns") 
-async def get_procurement_returns(request: Request):
+async def get_procurement_returns(request: Request, status: str = "all"):
     user = request.state.user
     if user.get("role") not in ["sales","procurement"]:
         raise HTTPException(status_code=403, detail="Only sales users are allowed.")
     if user.get("role") in ["sales","procurement"]:
         store_id = user.get("store_id")
-    return await get_all_procurement_returns(store_id)
+    return await get_all_procurement_returns(store_id, status)
 
 
 @router.get("/procurement/returns/{return_id}", response_model=ReturnedOrderModel)

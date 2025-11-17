@@ -262,8 +262,8 @@ async def get_all_products(store_id: str):
             # ✅ Calculate average price from all items
             average_price = await calculate_average_price(product.get("product_id"), store_id)
 
-            # Update product quantity to match actual item count
-            product["quantity"] = items_count
+            # ✅ Quantity is ALWAYS mapped to available ProductItems count
+            product["quantity"] = available_items  # Use available items, not total
             product["status"] = "Stock-in" if available_items > 0 else "Stock-out"
             product["average_price"] = average_price
             product["total_items"] = items_count
@@ -314,11 +314,11 @@ async def get_product_by_id(product_id: str, store_id: str):
         # ✅ Calculate average price from all items
         average_price = await calculate_average_price(product_id, store_id)
         
-        # Update product quantity to match actual item count
-        product_data["quantity"] = len(items)
+        # Update product quantity to match available items count (not total items)
+        product_data["quantity"] = available_items  # ✅ Show only available items
         product_data["status"] = "Stock-in" if available_items > 0 else "Stock-out"
         product_data["average_price"] = average_price
-        product_data["total_items"] = len(items)
+        product_data["total_items"] = len(items)  # Total including sold
         product_data["available_items"] = available_items
 
         return {
@@ -509,6 +509,7 @@ async def get_product_items(product_id: str, store_id: str):
 async def get_item_by_id(item_id: str, store_id: str):
     """
     Get details of a specific item.
+    Includes customer information if item was sold.
     """
     try:
         item = await db.ProductItems.find_one(
@@ -518,6 +519,20 @@ async def get_item_by_id(item_id: str, store_id: str):
         
         if not item:
             raise HTTPException(status_code=404, detail="Item not found.")
+        
+        # ✅ If item has been sold, fetch customer info from SalesOrder
+        if item.get("sold_order_id"):
+            order = await db.SalesOrders.find_one(
+                {"order_id": item.get("sold_order_id"), "store_id": store_id},
+                {"_id": 0, "customer_name": 1, "customer_phone": 1, "customer_email": 1, "customer_id": 1}
+            )
+            
+            if order:
+                # Add customer info directly to item data
+                item["customer_name"] = order.get("customer_name")
+                item["customer_phone"] = order.get("customer_phone")
+                item["customer_email"] = order.get("customer_email")
+                item["customer_id"] = order.get("customer_id")
         
         return {"item": item}
     
@@ -814,10 +829,14 @@ async def handle_customer_return(
                 "updated_at": datetime.utcnow()
             }
             
-            # Clear sold tracking if returning to inventory
-            if new_status == "available":
-                update_fields["sold_order_id"] = None
-                update_fields["sold_at"] = None
+            # ✅ KEEP SALES HISTORY - Don't clear sold_order_id and sold_at
+            # This preserves the complete item lifecycle history:
+            # - sold_order_id: tracks which order originally sold this item
+            # - sold_at: timestamp of when it was sold
+            # - returned_at: timestamp of when it was returned
+            # - return_reason: why it was returned
+            # This allows tracking: available → sold → returned → available (resold) → returned again
+            # Each transition is preserved in the history
             
             await db.ProductItems.update_one(
                 {"item_id": item["item_id"]},
