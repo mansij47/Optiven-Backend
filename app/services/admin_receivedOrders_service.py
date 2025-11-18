@@ -19,20 +19,15 @@ async def get_all_sales_orders(store_id: str):
             product_id = product.get("product_id")
             ordered_quantity = int(product.get("order_quantity", 0))
 
-            # Fetch from Inventory
-            inventory_item = await db.Inventory.find_one({
+            # ✅ Count available items from ProductItems collection (this is the source of truth)
+            available_items_count = await db.ProductItems.count_documents({
+                "product_id": product_id,
                 "store_id": store_id,
-                "product_id": product_id
-            },
-            {"_id":0})
+                "status": "available"
+            })
 
-            try:
-                inventory_quantity = int(inventory_item.get("quantity", 0)) if inventory_item else 0
-            except (ValueError, TypeError):
-                inventory_quantity = 0
-
-            # Compare and determine product_status
-            product_status = "Stock-out" if inventory_quantity < ordered_quantity else "Stock-in"
+            # Determine product_status based on available items
+            product_status = "Stock-out" if available_items_count < ordered_quantity else "Stock-in"
 
             # Add product_status to product
             product["product_status"] = product_status

@@ -8,8 +8,20 @@ return_orders_collection = db["ReturnOrders"]
 
 
 #List of Return Order from Sales
-async def get_return_orders_for_table_view(store_id: str) -> List[ReturnOrderSummary]:
-    orders = await return_orders_collection.find({"store_id": store_id}).to_list(length=None)
+async def get_return_orders_for_table_view(store_id: str, status_filter: str = "all") -> List[ReturnOrderSummary]:
+    # Build query based on status filter
+    query = {"store_id": store_id}
+    if status_filter == "pending":
+        # Match documents with status="pending" OR status field doesn't exist (old records)
+        query["$or"] = [
+            {"status": "pending"},
+            {"status": {"$exists": False}}
+        ]
+    elif status_filter == "completed":
+        query["status"] = "completed"
+    # if "all", no status filter applied
+    
+    orders = await return_orders_collection.find(query).to_list(length=None)
 
     result = []
     for order in orders:
@@ -26,6 +38,7 @@ async def get_return_orders_for_table_view(store_id: str) -> List[ReturnOrderSum
             product_name=product_name,
             customer_name=order.get("customer_name", "N/A"),
             returned_amount=returned_amount,
+            status=order.get("status", "pending"),
         ))
 
     return result

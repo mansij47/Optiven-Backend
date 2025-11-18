@@ -146,6 +146,7 @@ class SalesProductItem(BaseModel):
     product_name: Optional[str] = None
     quantity: str
     price: float
+    item_ids: Optional[List[str]] = None  # Array of item IDs (handles single or multiple)
 
 class SalesOrderDetails(BaseModel):
     order_id: str

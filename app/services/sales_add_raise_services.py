@@ -96,11 +96,38 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
 
 async def raise_request_order_service(order_id: str, estimate_date: str, org_id: str, store_id: str, requester: dict):
     request_data = await prepare_request_data(order_id, store_id, estimate_date, org_id, requester)
-    request_id = await generate_request_id()
-    request_data["request_id"] = request_id
-
-    await db.RequestedOrders.insert_one(request_data)
-    return request_id
+    
+    # Check if product already exists in requested orders
+    existing_request = await db.RequestedOrders.find_one({
+        "product_name": request_data["product_name"],
+        "store_id": store_id,
+        "org_id": org_id
+    })
+    
+    if existing_request:
+        # Update existing request: add quantities and update other fields
+        new_quantity = existing_request.get("quantity", 0) + request_data["quantity"]
+        
+        await db.RequestedOrders.update_one(
+            {"_id": existing_request["_id"]},
+            {
+                "$set": {
+                    "quantity": new_quantity,
+                    "estimate_date": estimate_date,
+                    "requested_by": requester,
+                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                }
+            }
+        )
+        return existing_request["request_id"]
+    else:
+        # Create new request
+        request_id = await generate_request_id()
+        request_data["request_id"] = request_id
+        request_data["created_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        
+        await db.RequestedOrders.insert_one(request_data)
+        return request_id
 
 # --- Helper function to fetch and validate the sales order ---
 async def fetch_sales_order(order_id: str, store_id: str):
@@ -148,6 +175,7 @@ def build_return_doc(data, order, products, total_amount, return_id, store_id):
         "reason": data.reason,
         "returned_amount": round(total_amount, 2),
         "sent_to_procurement": 0,
+        "status": "pending",
         "store_id": store_id
     }
 

@@ -101,9 +101,50 @@ async def fetch_inventory_details(product_id: str, store_id: str):
     if not inventory_item:
         raise HTTPException(status_code=404, detail=f"Product with ID {product_id} not found in inventory.")
 
-    try:
-        unit_price = float(inventory_item["unit_price"])
-    except (ValueError, TypeError, KeyError):
+    # ✅ Calculate average price from ProductItems (source of truth for pricing)
+    items_cursor = db.ProductItems.find({
+        "product_id": product_id,
+        "store_id": store_id,
+        "status": "available"
+    }, {"unit_price": 1, "_id": 0})
+    
+    items = await items_cursor.to_list(length=None)
+    
+    unit_price = 0.0
+    if items:
+        total_price = 0.0
+        valid_count = 0
+        
+        for item in items:
+            try:
+                price_value = item.get("unit_price", 0)
+                # Convert string to float if needed
+                if isinstance(price_value, str):
+                    price_value = float(price_value) if price_value and price_value != "0" else 0.0
+                else:
+                    price_value = float(price_value)
+                
+                if price_value > 0:
+                    total_price += price_value
+                    valid_count += 1
+            except (ValueError, TypeError):
+                continue
+        
+        if valid_count > 0:
+            unit_price = round(total_price / valid_count, 2)
+    
+    # If still 0, try Inventory table as fallback
+    if unit_price == 0:
+        try:
+            inv_price = inventory_item.get("unit_price", 0)
+            if isinstance(inv_price, str):
+                unit_price = float(inv_price) if inv_price and inv_price != "0" else 0.0
+            else:
+                unit_price = float(inv_price)
+        except (ValueError, TypeError):
+            unit_price = 0.0
+    
+    if unit_price == 0:
         raise HTTPException(status_code=500, detail=f"Invalid unit price for product ID {product_id}.")
 
     try:
@@ -111,7 +152,13 @@ async def fetch_inventory_details(product_id: str, store_id: str):
     except (ValueError, TypeError):
         product_tax = 0
 
-    inventory_quantity = int(inventory_item.get("quantity", 0)) if inventory_item else 0
+    # Get available quantity from ProductItems
+    inventory_quantity = await db.ProductItems.count_documents({
+        "product_id": product_id,
+        "store_id": store_id,
+        "status": "available"
+    })
+    
     consumer_return_conditions = inventory_item.get("consumer_return_conditions", [])
 
     return {

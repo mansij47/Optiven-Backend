@@ -121,7 +121,12 @@ async def fetch_inventory_details(product_id: str, store_id: str):
     except (ValueError, TypeError):
         product_tax = 0
 
-    inventory_quantity = int(inventory_item.get("quantity", 0)) if inventory_item else 0
+    # ✅ Count available items from ProductItems (not Inventory.quantity)
+    inventory_quantity = await db.ProductItems.count_documents({
+        "product_id": product_id,
+        "store_id": store_id,
+        "status": "available"
+    })
 
     return {
         "inventory_item": inventory_item,

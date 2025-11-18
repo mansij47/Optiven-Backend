@@ -4,48 +4,122 @@ from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 
 
+# class Product(BaseModel):
+#     org_id: Optional[str] = None
+#     store_id: Optional[str] = None
+#     product_name: Optional[str] = None
+#     is_consumer_returnable: Optional[bool] = False
+#     consumer_return_conditions: Optional[List[str]] = Field(default_factory=list)
+#     is_seller_returnable: Optional[bool] = False
+#     seller_return_conditions: Optional[List[str]] = Field(default_factory=list)
+#     unit_price: Optional[str] = "0"
+#     unit: Optional[str] = None
+#     quantity: Optional[int] = 0
+#     category: Optional[str] = None
+#     sub_category: Optional[str] = None
+#     tags: Optional[List[str]] = Field(default_factory=list)
+#     tax: Optional[float] = 0.0
+#     has_warranty: Optional[bool] = False
+#     warranty_tenure: Optional[int] = 0
+#     warranty_unit: Optional[str] = ""
+#     last_updated: Optional[datetime] = Field(default_factory=datetime.utcnow)
+#     status: Optional[str] = None 
+
 class Product(BaseModel):
     org_id: Optional[str] = None
     store_id: Optional[str] = None
     product_name: Optional[str] = None
-    is_consumer_returnable: Optional[bool] = False
-    consumer_return_conditions: Optional[List[str]] = Field(default_factory=list)
-    is_seller_returnable: Optional[bool] = False
-    seller_return_conditions: Optional[List[str]] = Field(default_factory=list)
-    unit_price: Optional[str] = "0"
+    product_id: Optional[str] = None #Auto generated unique ID (PROD001, PROD002 etc)
     unit: Optional[str] = None
-    quantity: Optional[int] = 0
+    quantity: Optional[int] = None
+    average_price: Optional[float] = 0.0  # Calculated from all items' unit_price
+    
+    min_stock: Optional[int] = 5  # Minimum stock level to trigger restock notification
     category: Optional[str] = None
     sub_category: Optional[str] = None
     tags: Optional[List[str]] = Field(default_factory=list)
-    tax: Optional[float] = 0.0
-    has_warranty: Optional[bool] = False
-    warranty_tenure: Optional[int] = 0
-    warranty_unit: Optional[str] = ""
-    last_updated: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
     status: Optional[str] = None
+    tax: Optional[float] = 0.0 # tax according to country wise 
+   
+    class ProductUpdateModel(BaseModel):
+     org_id: Optional[str] = None
+     store_id: Optional[str] = None
+     product_name: Optional[str] = None
+     product_id: Optional[str] = None #Auto generated unique ID (PROD001, PROD002 etc)
+     unit: Optional[str] = None
+     quantity: Optional[int] = None
+     average_price: Optional[float] = 0.0  # Calculated from all items' unit_price
+     min_stock: Optional[int] = 5  # Minimum stock level to trigger restock notification
+     category: Optional[str] = None
+     sub_category: Optional[str] = None
+     tags: Optional[List[str]] = Field(default_factory=list)
+     updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+     created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+     status: Optional[str] = None
+     tax: Optional[float] = 0.0
 
-
-class ProductUpdate(BaseModel):  # <- now this is importable
+class ProductItem(BaseModel):
     org_id: Optional[str] = None
     store_id: Optional[str] = None
-    product_name: Optional[str] = None
-    is_consumer_returnable: Optional[bool] = None
-    consumer_return_conditions: Optional[List[str]] = None
-    is_seller_returnable: Optional[bool] = None
-    seller_return_conditions: Optional[List[str]] = None
-    unit_price: Optional[str] = None
-    unit: Optional[str] = None
-    quantity: Optional[int] = None
-    category: Optional[str] = None
-    sub_category: Optional[str] = None
-    tags: Optional[List[str]] = None
-    tax: Optional[int] = None
-    has_warranty: Optional[bool] = None
-    warranty_tenure: Optional[int] = None
-    warranty_unit: Optional[str] = None
-    last_updated: Optional[str] = None
-    status: Optional[str] = None
+    item_id: Optional[str] = None  # Auto-generated unique ID (ITEM001, ITEM002, etc.)
+    product_id: Optional[str] = None  # Maps to parent product (e.g., iPhone product)
+    item_name: Optional[str] = None
+    unit_price: Optional[str] = "0"
+    vendor_id: Optional[str] = None  # Link to vendor
+    vendor_name: Optional[str] = None 
+    serial_no: Optional[str] = None
+    batch_number: Optional[str] = None
+
+class ProductItemUpdateModel(BaseModel):
+     org_id: Optional[str] = None
+     store_id: Optional[str] = None
+     item_id: Optional[str] = None
+     product_id: Optional[str] = None
+     item_name: Optional[str] = None
+     unit_price: Optional[str] = None
+     vendor_id: Optional[str] = None
+     vendor_name: Optional[str] = None
+     serial_no: Optional[str] = None
+     batch_number: Optional[str] = None
+
+    # Return conditions
+     is_consumer_returnable: Optional[bool] = False
+     consumer_return_conditions: Optional[List[str]] = Field(default_factory=list)
+     is_seller_returnable: Optional[bool] = False
+     seller_return_conditions: Optional[List[str]] = Field(default_factory=list)
+    
+    # Warranty information
+     has_warranty: Optional[bool] = False
+     warranty_tenure: Optional[int] = 0
+     warranty_unit: Optional[str] = ""
+     updated_at: Optional[str] = Field(default_factory=datetime.utcnow)  # Format: "YYYY-MM-DD HH:MM:SS"
+     
+
+
+# class ProductUpdate(BaseModel):  # <- now this is importable
+#     org_id: Optional[str] = None
+#     store_id: Optional[str] = None
+#     product_name: Optional[str] = None
+#     is_consumer_returnable: Optional[bool] = None
+#     consumer_return_conditions: Optional[List[str]] = None
+#     is_seller_returnable: Optional[bool] = None
+#     seller_return_conditions: Optional[List[str]] = None
+#     unit_price: Optional[str] = None
+#     unit: Optional[str] = None
+#     quantity: Optional[int] = None
+#     category: Optional[str] = None
+#     sub_category: Optional[str] = None
+#     tags: Optional[List[str]] = None
+#     tax: Optional[int] = None
+#     has_warranty: Optional[bool] = None
+#     warranty_tenure: Optional[int] = None
+#     warranty_unit: Optional[str] = None
+#     last_updated: Optional[str] = None
+#     status: Optional[str] = None
+    
+    
 
    
 
