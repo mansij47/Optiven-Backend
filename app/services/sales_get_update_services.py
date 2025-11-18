@@ -126,6 +126,8 @@ async def fetch_order_and_validate(order_id: str, store_id: str):
     return order
 
 async def update_inventory_for_order(order, store_id: str):
+    sold_items_map = {}  # Track which items were sold for each product
+    
     for product in order.get("products", []):
         product_id = product.get("product_id")
         order_quantity = int(product.get("order_quantity", 0))  # Correct field
@@ -143,8 +145,14 @@ async def update_inventory_for_order(order, store_id: str):
             # Not enough items available
             continue
 
+        # Store the item IDs that were sold for this product
+        sold_item_ids = []
+        
         # ✅ Mark each item as sold
         for item in available_items:
+            item_id = item["item_id"]
+            sold_item_ids.append(item_id)
+            
             # ✅ Preserve previous sales history by using $push to add to sales_history array
             # If item was previously sold and returned, we keep that history
             update_data = {
@@ -170,9 +178,12 @@ async def update_inventory_for_order(order, store_id: str):
                 }
             
             await db.ProductItems.update_one(
-                {"item_id": item["item_id"]},
+                {"item_id": item_id},
                 update_data
             )
+
+        # Store the sold items for this product
+        sold_items_map[product_id] = sold_item_ids
 
         # ✅ Update product quantity (count remaining available items)
         remaining_items = await db.ProductItems.count_documents({
@@ -190,6 +201,8 @@ async def update_inventory_for_order(order, store_id: str):
                 }
             }
         )
+    
+    return sold_items_map
 
 async def mark_order_status_as_sold(order_id: str, store_id: str):
     result = await db.SalesOrders.update_one(
@@ -206,9 +219,39 @@ async def mark_order_status_as_sold(order_id: str, store_id: str):
 
 async def mark_order_as_sold(order_id: str, store_id: str):
     order = await fetch_order_and_validate(order_id, store_id)
-    await update_inventory_for_order(order, store_id)
-    updated_count = await mark_order_status_as_sold(order_id, store_id)
-    return updated_count
+    sold_items_map = await update_inventory_for_order(order, store_id)
+    
+    # Update the order products with item_ids information
+    updated_products = []
+    for product in order.get("products", []):
+        product_id = product.get("product_id")
+        product_copy = product.copy()
+        
+        # Add item_ids array (handles both single and multiple items)
+        if product_id in sold_items_map:
+            item_ids = sold_items_map[product_id]
+            if len(item_ids) > 0:
+                product_copy["item_ids"] = item_ids  # Always store as array
+        
+        updated_products.append(product_copy)
+    
+    # Update the order with item information
+    await db.SalesOrders.update_one(
+        {
+            "order_id": order_id,
+            "store_id": store_id,
+            "order_status": "0"
+        },
+        {
+            "$set": {
+                "order_status": "1",
+                "products": updated_products,
+                "sold_at": datetime.utcnow()
+            }
+        }
+    )
+    
+    return 1  # Return success count
 
 
 async def delete_order_by_id(order_id: str, store_id: str) -> int:

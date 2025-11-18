@@ -219,7 +219,7 @@ async def fetch_all_products_route(request: Request):
     if not store_id:
         raise HTTPException(status_code=400, detail="Store ID missing in token.")
     response = await get_all_products(store_id)
-    print("Fetched products:", response)
+    # print("Fetched products:", response)
     return response
 
 

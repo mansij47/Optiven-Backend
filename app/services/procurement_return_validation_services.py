@@ -72,11 +72,11 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
         return_qty = product.get("return_quantity", 1)
         
         if destination == "Inventory":
-            message = f"✅ Customer return processed: {return_qty} unit(s) of {product_name} returned to Inventory (Available for resale)"
+            message = f"Customer return processed: {return_qty} unit(s) of {product_name} returned to Inventory (Available for resale)"
         elif destination == "LossOrders":
-            message = f"⚠️ Customer return processed: {return_qty} unit(s) of {product_name} marked as Loss (Damaged & Not Returnable to Vendor)"
+            message = f" Customer return processed: {return_qty} unit(s) of {product_name} marked as Loss (Damaged & Not Returnable to Vendor)"
         elif destination == "ReturnToVendor":
-            message = f"📦 Customer return processed: {return_qty} unit(s) of {product_name} marked for Return to Vendor (Damaged & Returnable)"
+            message = f" Customer return processed: {return_qty} unit(s) of {product_name} marked for Return to Vendor (Damaged & Returnable)"
         else:
             message = f"Customer return processed successfully with item tracking"
         
@@ -125,7 +125,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
             },
             upsert=True
         )
-        action = f"📦 Return to Vendor: {product['return_quantity']} unit(s) of {product['product_name']} marked for vendor return (Damaged & Returnable)"
+        action = f" Return to Vendor: {product['return_quantity']} unit(s) of {product['product_name']} marked for vendor return (Damaged & Returnable)"
 
     # ✅ CASE 2: Product Damage & NOT Seller Returnable → LossOrders
     elif reason == "Damage on arrival" and is_seller_returnable:
@@ -144,7 +144,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
             },
             upsert=True
         )
-        action = f"⚠️ Loss Orders: {product['return_quantity']} unit(s) of {product['product_name']} added to Loss Sheet (Damaged & Not Returnable)"
+        action = f" Loss Orders: {product['return_quantity']} unit(s) of {product['product_name']} added to Loss Sheet (Damaged & Not Returnable)"
 
     # ✅ CASE 3: Not Product Damage → Inventory (with hierarchical structure)
     else:
@@ -238,7 +238,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
             await db.ProductItems.insert_one(item_data)
             items_created.append(item_id)
         
-        action = f"✅ Added to Inventory: {len(items_created)} item(s) of {product_name} added to Inventory (Available for sale)"
+        action = f" Added to Inventory: {len(items_created)} item(s) of {product_name} added to Inventory (Available for sale)"
 
     # ✅ Update status to completed after processing
     await return_orders_collection.update_one(
