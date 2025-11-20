@@ -36,11 +36,11 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
         sold_items_count = await db.ProductItems.count_documents({
             "product_id": product.get("product_id"),
             "store_id": store_id,
-            "sold_order_id": order_id,
-            "status": "sold"
-        })
+                "sold_order_id": order_id,
+                "status": "sold"
+            })
         is_customer_return = sold_items_count > 0
-    
+        
     # ✅ If this is a customer return, use item-based return logic
     if is_customer_return:
         result = await handle_customer_return(
@@ -100,51 +100,242 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
             if vendor:
                 vendor_id = vendor.get("vendor_id")
         
-        await return_to_vendor_collection.update_one(
-            {"product_id": product["product_id"], "store_id": store_id, "org_id": org_id},
-            {
-                "$inc": {"return_quantity": product["return_quantity"]},
-                "$setOnInsert": {
-                    "return_id": return_order["return_id"],
-                    "order_id": return_order["order_id"],
-                    "vendor_id": vendor_id,  # Add vendor_id
-                    "vendor_name": vendor_name,
-                    "product_name": product["product_name"],
-                    "delivery_date": product.get("delivery_date", datetime.now().strftime("%Y-%m-%d")),
-                    "status": "0",
-                    "return_amount": str(product.get("return_amount", "0.0")),
-                    "original_quantity": product.get("original_quantity", product["return_quantity"]),
-                    "unit": product.get("unit", "pcs"),
-                    "contract_id": product.get("contract_id", "UNKNOWN"),
-                    "purchase_date": product.get("purchase_date", datetime.now().strftime("%Y-%m-%d")),
-                    "product_condition": "Damaged and returnable",
-                    "total_price": product.get("total_price", product["return_quantity"] * product.get("unit_price", 0)),
-                    "unit_price": product.get("unit_price", 0),
-                    "return_reason": return_order.get("seller_return_conditions", ["Unknown"])[0]
+        # ✅ Get available product items to mark as returnable to vendor
+        available_items = await db.ProductItems.find({
+            "product_id": product["product_id"],
+            "store_id": store_id,
+            "status": "available"
+        }).limit(product["return_quantity"]).to_list(length=None)
+        
+        if len(available_items) < product["return_quantity"]:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Not enough available items to return to vendor. Available: {len(available_items)}, Requested: {product['return_quantity']}"
+            )
+        
+        # ✅ Extract item IDs and mark them as returnable to vendor
+        returnable_item_ids = []
+        for item in available_items:
+            item_id = item.get("item_id")
+            returnable_item_ids.append(item_id)
+            
+            # Update ProductItem status to 'return_to_vendor'
+            await db.ProductItems.update_one(
+                {"_id": item["_id"]},
+                {
+                    "$set": {
+                        "status": "return_to_vendor",
+                        "return_reason": "Damaged and returnable to vendor",
+                        "return_initiated_at": datetime.now(),
+                        "updated_at": datetime.now()
+                    }
                 }
-            },
-            upsert=True
-        )
-        action = f" Return to Vendor: {product['return_quantity']} unit(s) of {product['product_name']} marked for vendor return (Damaged & Returnable)"
+            )
+        
+        # ✅ Check if return to vendor entry already exists
+        existing_return = await return_to_vendor_collection.find_one({
+            "product_id": product["product_id"],
+            "store_id": store_id,
+            "org_id": org_id
+        })
+        
+        if existing_return:
+            # Update existing return entry - increment quantity, add new item IDs
+            existing_item_ids = existing_return.get("returnable_item_ids", [])
+            updated_item_ids = existing_item_ids + returnable_item_ids
+            new_quantity = existing_return.get("return_quantity", 0) + product["return_quantity"]
+            unit_price = float(existing_return.get("unit_price", 0))
+            new_return_amount = unit_price * new_quantity
+            
+            await return_to_vendor_collection.update_one(
+                {"_id": existing_return["_id"]},
+                {
+                    "$set": {
+                        "return_quantity": new_quantity,
+                        "return_amount": str(new_return_amount),
+                        "returnable_item_ids": updated_item_ids,  # Store all returnable item IDs
+                        "total_price": existing_return.get("total_price", 0) + product.get("total_price", product["return_quantity"] * unit_price),
+                        "updated_at": datetime.now()
+                    }
+                }
+            )
+            action = f" Return to Vendor: {product['return_quantity']} unit(s) of {product['product_name']} added to existing vendor return (Total: {new_quantity} units, Items: {returnable_item_ids}, Returnable to Vendor)"
+        else:
+            # Create new return to vendor entry with complete details
+            return_data = {
+                "return_id": return_order["return_id"],
+                "order_id": return_order.get("order_id"),
+                "product_id": product["product_id"],
+                "store_id": store_id,
+                "org_id": org_id,
+                "vendor_id": vendor_id,
+                "vendor_name": vendor_name,
+                "product_name": product["product_name"],
+                "category": product.get("category", "stationery"),
+                "sub_category": product.get("sub_category", "misc"),
+                "delivery_date": product.get("delivery_date", datetime.now().strftime("%Y-%m-%d")),
+                "status": "0",
+                "return_quantity": product["return_quantity"],
+                "return_amount": str(product.get("return_amount", "0.0")),
+                "original_quantity": product.get("original_quantity", product["return_quantity"]),
+                "unit": product.get("unit", "pcs"),
+                "unit_price": product.get("unit_price", 0),
+                "contract_id": product.get("contract_id", "UNKNOWN"),
+                "purchase_date": product.get("purchase_date", datetime.now().strftime("%Y-%m-%d")),
+                "product_condition": "Damaged and returnable",
+                "total_price": product.get("total_price", product["return_quantity"] * product.get("unit_price", 0)),
+                "return_reason": return_order.get("seller_return_conditions", ["Unknown"])[0],
+                "returnable_item_ids": returnable_item_ids,  # Store specific item IDs for vendor return
+                # ✅ Store complete vendor and purchase information
+                "batch_number": product.get("batch_number"),
+                # ✅ Store return conditions and warranty information
+                "is_consumer_returnable": return_order.get("is_customer_returnable", False),
+                "consumer_return_conditions": return_order.get("consumer_return_conditions", []),
+                "is_seller_returnable": return_order.get("is_seller_returnable", False),
+                "seller_return_conditions": return_order.get("seller_return_conditions", []),
+                "has_warranty": product.get("has_warranty", False) or (product.get("warranty_tenure", 0) > 0),
+                "warranty_tenure": product.get("warranty_tenure", 0),
+                "warranty_unit": product.get("warranty_unit", "months"),
+                # ✅ Store return specific information
+                "return_condition": "Damage on arrival - Returnable to vendor",
+                "return_order_id": return_order["return_id"],
+                "original_order_id": return_order.get("order_id"),
+                "tags": product.get("tags", []),
+                "tax": product.get("tax", 0),
+                "created_at": datetime.now(),
+                "updated_at": datetime.now()
+            }
+            
+            await return_to_vendor_collection.insert_one(return_data)
+            action = f" Return to Vendor: {product['return_quantity']} unit(s) of {product['product_name']} marked for vendor return (Items: {returnable_item_ids}, Damaged & Returnable)"
 
     # ✅ CASE 2: Product Damage & NOT Seller Returnable → LossOrders
     elif reason == "Damage on arrival" and is_seller_returnable:
-        await loss_orders_collection.update_one(
-            {"product_id": product["product_id"], "store_id": store_id, "org_id": org_id},
-            {
-                "$inc": {"quantity_lost": product["return_quantity"]},
-                "$setOnInsert": {
-                    "product_name": product["product_name"],
-                    "category": product.get("category", "stationery"),
-                    "date_reported": datetime.now().strftime("%Y-%m-%d"),
-                    "unit": product.get("unit", "pcs"),
-                    "unit_price": str(product.get("unit_price", "0")),
-                    "reason": "Damaged and not returnable"
+        # Get available product items to mark as damaged
+        available_items = await db.ProductItems.find({
+            "product_id": product["product_id"],
+            "store_id": store_id,
+            "status": "available"
+        }).limit(product["return_quantity"]).to_list(length=None)
+        
+        if len(available_items) < product["return_quantity"]:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Not enough available items to mark as damaged. Available: {len(available_items)}, Requested: {product['return_quantity']}"
+            )
+        
+        # Extract item IDs and mark them as damaged
+        damaged_item_ids = []
+        for item in available_items:
+            item_id = item.get("item_id")
+            damaged_item_ids.append(item_id)
+            
+            # Update ProductItem status to 'damaged'
+            await db.ProductItems.update_one(
+                {"_id": item["_id"]},
+                {
+                    "$set": {
+                        "status": "damaged",
+                        "damage_reason": "Damaged and not returnable",
+                        "damaged_at": datetime.now(),
+                        "updated_at": datetime.now()
+                    }
                 }
-            },
-            upsert=True
-        )
-        action = f" Loss Orders: {product['return_quantity']} unit(s) of {product['product_name']} added to Loss Sheet (Damaged & Not Returnable)"
+            )
+        
+        # Check if loss entry already exists for this product_id
+        existing_loss = await loss_orders_collection.find_one({
+            "product_id": product["product_id"],
+            "store_id": store_id,
+            "org_id": org_id
+        })
+        
+        if existing_loss:
+            # Update existing loss entry - increment quantity, add new item IDs, and recalculate loss_amount
+            existing_item_ids = existing_loss.get("damaged_item_ids", [])
+            updated_item_ids = existing_item_ids + damaged_item_ids
+            new_quantity = existing_loss.get("quantity_lost", 0) + product["return_quantity"]
+            unit_price = float(existing_loss.get("unit_price", 0))
+            new_loss_amount = unit_price * new_quantity
+            
+            # ✅ Update with complete vendor and item information
+            await loss_orders_collection.update_one(
+                {"_id": existing_loss["_id"]},
+                {
+                    "$set": {
+                        "quantity_lost": new_quantity,
+                        "loss_amount": str(new_loss_amount),
+                        "damaged_item_ids": updated_item_ids,  # Store all damaged item IDs
+                        "total_price": existing_loss.get("total_price", 0) + product.get("total_price", product["return_quantity"] * unit_price),
+                        # ✅ Update vendor information if not already present
+                        "vendor_id": vendor_id if not existing_loss.get("vendor_id") else existing_loss.get("vendor_id"),
+                        "vendor_name": vendor_name if not existing_loss.get("vendor_name") else existing_loss.get("vendor_name"),
+                        # ✅ Update return conditions information
+                        "is_consumer_returnable": return_order.get("is_customer_returnable", existing_loss.get("is_consumer_returnable", False)),
+                        "consumer_return_conditions": return_order.get("consumer_return_conditions", existing_loss.get("consumer_return_conditions", [])),
+                        "is_seller_returnable": return_order.get("is_seller_returnable", existing_loss.get("is_seller_returnable", False)),
+                        "seller_return_conditions": return_order.get("seller_return_conditions", existing_loss.get("seller_return_conditions", [])),
+                        # ✅ Update damage condition
+                        "damage_condition": "Semi-damage" if reason != "Damage on arrival" else "Damage on arrival",
+                        "updated_at": datetime.now()
+                    }
+                }
+            )
+            loss_id = existing_loss.get("loss_id", "UNKNOWN")
+            action = f" Loss Orders: {product['return_quantity']} unit(s) of {product['product_name']} added to existing Loss Sheet entry {loss_id} (Total: {new_quantity} units, Damaged Items: {damaged_item_ids}, Not Returnable)"
+        else:
+            # Generate new loss_id for tracking
+            loss_id = await _next_id(loss_orders_collection, "loss_id", "LOSS", store_id)
+            
+            # Calculate loss_amount
+            unit_price = float(product.get("unit_price", 0))
+            quantity_lost = product["return_quantity"]
+            loss_amount = unit_price * quantity_lost
+            
+            # Create new loss entry with loss_id and damaged item IDs and complete vendor/item details
+            loss_data = {
+                "loss_id": loss_id,  # Custom tracking ID
+                "product_id": product["product_id"],  # Original product reference
+                "store_id": store_id,
+                "org_id": org_id,
+                "product_name": product["product_name"],
+                "category": product.get("category", "stationery"),
+                "sub_category": product.get("sub_category", "misc"),
+                "date_reported": datetime.now().strftime("%Y-%m-%d"),
+                "unit": product.get("unit", "pcs"),
+                "unit_price": str(unit_price),
+                "quantity_lost": quantity_lost,
+                "loss_amount": str(loss_amount),
+                "reason": "Damaged and not returnable",
+                "damaged_item_ids": damaged_item_ids,  # Store specific item IDs that are damaged
+                # ✅ Store complete vendor and purchase information
+                "vendor_id": vendor_id,
+                "vendor_name": vendor_name,
+                "batch_number": product.get("batch_number"),
+                "purchase_date": product.get("purchase_date", datetime.now().strftime("%Y-%m-%d")),
+                "delivery_date": product.get("delivery_date", datetime.now().strftime("%Y-%m-%d")),
+                "contract_id": product.get("contract_id", "UNKNOWN"),
+                "total_price": product.get("total_price", quantity_lost * unit_price),
+                # ✅ Store return conditions and warranty information
+                "is_consumer_returnable": return_order.get("is_customer_returnable", False),
+                "consumer_return_conditions": return_order.get("consumer_return_conditions", []),
+                "is_seller_returnable": return_order.get("is_seller_returnable", False),
+                "seller_return_conditions": return_order.get("seller_return_conditions", []),
+                "has_warranty": product.get("has_warranty", False) or (product.get("warranty_tenure", 0) > 0),
+                "warranty_tenure": product.get("warranty_tenure", 0),
+                "warranty_unit": product.get("warranty_unit", "months"),
+                # ✅ Store damage specific information
+                "damage_condition": "Semi-damage" if reason != "Damage on arrival" else "Damage on arrival",
+                "return_order_id": return_order["return_id"],
+                "original_order_id": return_order.get("order_id"),
+                "tags": product.get("tags", []),
+                "tax": product.get("tax", 0),
+                "created_at": datetime.now(),
+                "updated_at": datetime.now()
+            }
+            
+            await loss_orders_collection.insert_one(loss_data)
+            action = f" Loss Orders: {product['return_quantity']} unit(s) of {product['product_name']} added to Loss Sheet with tracking ID: {loss_id} (Damaged Items: {damaged_item_ids}, Not Returnable)"
 
     # ✅ CASE 3: Not Product Damage → Inventory (with hierarchical structure)
     else:
