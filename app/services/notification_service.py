@@ -145,9 +145,14 @@ async def get_all_notifications(user: dict, status: Optional[int] = None):
         [("_id", -1)]
     ).to_list(length=None)
 
-    # Convert ObjectId to string
+    # Convert ObjectId and datetime to string
     for notif in notifications:
         notif["_id"] = str(notif["_id"])
+        # Convert created_at datetime to ISO string for JSON serialization
+        if "created_at" in notif and notif["created_at"]:
+            notif["created_at"] = notif["created_at"].isoformat()
+    
+    return notifications
 
     return notifications
 

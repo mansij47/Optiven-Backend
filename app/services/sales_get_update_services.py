@@ -75,6 +75,7 @@ async def get_all_sales_orders(store_id: str):
         for product in order.get("products", []):
             product_id = product.get("product_id")
             ordered_quantity = int(product.get("order_quantity", 0))
+            item_ids = product.get("item_ids", [])
 
             # ✅ Count available items from ProductItems collection (this is the source of truth)
             available_items_count = await db.ProductItems.count_documents({
@@ -86,6 +87,15 @@ async def get_all_sales_orders(store_id: str):
             # Determine product_status based on available items
             product_status = "Stock-out" if available_items_count < ordered_quantity else "Stock-in"
             product["product_status"] = product_status
+            
+            # ✅ ITEM-BASED APPROACH: Add item details for tracking (only basic info for list view)
+            if item_ids:
+                product["item_count"] = len(item_ids)
+                product["has_item_details"] = True
+            else:
+                product["item_count"] = 0
+                product["has_item_details"] = False
+            
             updated_products.append(product)
 
         # Replace products list
@@ -109,7 +119,26 @@ async def get_all_sold_orders(store_id: str):
     orders = await cursor.to_list(length=None)
 
     for order in orders:
-        order["status"] = parse_status_string(order.get("order_status", "1"))
+        # ✅ ITEM-BASED APPROACH: Add item count for each product
+        updated_products = []
+        for product in order.get("products", []):
+            item_ids = product.get("item_ids", [])
+            
+            # Add item tracking metadata
+            if item_ids:
+                product["item_count"] = len(item_ids)
+                product["has_item_details"] = True
+            else:
+                product["item_count"] = 0
+                product["has_item_details"] = False
+            
+            updated_products.append(product)
+        
+        order["products"] = updated_products
+        
+        # Convert order_status to status text
+        order["status"] = parse_status_string(order["order_status"])
+        # Remove raw order_status field from final output
         order.pop("order_status", None)
 
     return orders
@@ -340,9 +369,28 @@ async def get_all_products(store_id: str):
                 "status": "available"
             })
             
+            # ✅ ITEM-BASED APPROACH: Get sample item info (vendor, warranty, etc.)
+            sample_item = await db.ProductItems.find_one({
+                "product_id": product_id,
+                "store_id": store_id,
+                "status": "available"
+            }, {"_id": 0})
+            
             # Update quantity to reflect actual available items
             product["quantity"] = available_items_count
             product["status"] = "Stock-in" if available_items_count > 0 else "Stock-out"
+            
+            # ✅ Add item-level metadata from sample item
+            if sample_item:
+                product["vendor_name"] = sample_item.get("vendor_name", "Unknown")
+                product["vendor_id"] = sample_item.get("vendor_id")
+                product["has_warranty"] = sample_item.get("has_warranty", False)
+                product["warranty_tenure"] = sample_item.get("warranty_tenure", 0)
+                product["warranty_unit"] = sample_item.get("warranty_unit", "months")
+                product["is_consumer_returnable"] = sample_item.get("is_consumer_returnable", False)
+                product["is_seller_returnable"] = sample_item.get("is_seller_returnable", False)
+                product["average_price"] = sample_item.get("unit_price", product.get("unit_price", 0))
+            
             products.append(product)
 
         return products
@@ -523,6 +571,7 @@ async def get_sales_order_by_id(order_id: str, store_id: str):
     for product in order.get("products", []):
         product_id = product.get("product_id")
         ordered_quantity = int(product.get("order_quantity", 0))
+        item_ids = product.get("item_ids", [])
 
         # ✅ Count available items from ProductItems collection
         available_items_count = await db.ProductItems.count_documents({
@@ -534,6 +583,40 @@ async def get_sales_order_by_id(order_id: str, store_id: str):
         # Determine product status based on available items
         product_status = "Stock-out" if available_items_count < ordered_quantity else "Stock-in"
         product["product_status"] = product_status
+        
+        # ✅ ITEM-BASED APPROACH: Fetch full item details if item_ids exist
+        if item_ids:
+            items_details = []
+            for item_id in item_ids:
+                item = await db.ProductItems.find_one({
+                    "item_id": item_id,
+                    "product_id": product_id,
+                    "store_id": store_id
+                }, {"_id": 0})
+                
+                if item:
+                    items_details.append({
+                        "item_id": item_id,
+                        "vendor_id": item.get("vendor_id"),
+                        "vendor_name": item.get("vendor_name", "Unknown"),
+                        "contract_id": item.get("contract_id"),
+                        "purchase_date": item.get("purchase_date"),
+                        "delivery_date": item.get("delivery_date"),
+                        "unit_price": item.get("unit_price"),
+                        "batch_number": item.get("batch_number"),
+                        "serial_number": item.get("serial_number"),
+                        "status": item.get("status"),
+                        "has_warranty": item.get("has_warranty", False),
+                        "warranty_tenure": item.get("warranty_tenure", 0),
+                        "warranty_unit": item.get("warranty_unit", "months"),
+                        "is_consumer_returnable": item.get("is_consumer_returnable", False),
+                        "consumer_return_conditions": item.get("consumer_return_conditions", []),
+                        "is_seller_returnable": item.get("is_seller_returnable", False),
+                        "seller_return_conditions": item.get("seller_return_conditions", [])
+                    })
+            
+            product["items"] = items_details
+        
         updated_products.append(product)
 
     # Final transformation
@@ -551,10 +634,57 @@ async def get_sold_order_by_id(order_id: str, store_id: str):
         {"_id": 0}
     )
 
-    if order:
-        # Convert order_status to a readable status and remove original key
-        order["status"] = parse_status_string(order.get("order_status", ""))
-        order.pop("order_status", None)
+    if not order:
+        return None
+
+    # ✅ ITEM-BASED APPROACH: Enrich products with item details
+    updated_products = []
+    for product in order.get("products", []):
+        product_id = product.get("product_id")
+        item_ids = product.get("item_ids", [])
+        
+        # Fetch full item details if item_ids exist
+        if item_ids:
+            items_details = []
+            for item_id in item_ids:
+                item = await db.ProductItems.find_one({
+                    "item_id": item_id,
+                    "product_id": product_id,
+                    "store_id": store_id
+                }, {"_id": 0})
+                
+                if item:
+                    items_details.append({
+                        "item_id": item_id,
+                        "vendor_id": item.get("vendor_id"),
+                        "vendor_name": item.get("vendor_name", "Unknown"),
+                        "contract_id": item.get("contract_id"),
+                        "purchase_date": item.get("purchase_date"),
+                        "delivery_date": item.get("delivery_date"),
+                        "unit_price": item.get("unit_price"),
+                        "batch_number": item.get("batch_number"),
+                        "serial_number": item.get("serial_number"),
+                        "status": item.get("status"),
+                        "sold_at": item.get("sold_at"),
+                        "sold_order_id": item.get("sold_order_id"),
+                        "has_warranty": item.get("has_warranty", False),
+                        "warranty_tenure": item.get("warranty_tenure", 0),
+                        "warranty_unit": item.get("warranty_unit", "months"),
+                        "is_consumer_returnable": item.get("is_consumer_returnable", False),
+                        "consumer_return_conditions": item.get("consumer_return_conditions", []),
+                        "is_seller_returnable": item.get("is_seller_returnable", False),
+                        "seller_return_conditions": item.get("seller_return_conditions", [])
+                    })
+            
+            product["items"] = items_details
+        
+        updated_products.append(product)
+    
+    order["products"] = updated_products
+    
+    # Convert order_status to a readable status and remove original key
+    order["status"] = parse_status_string(order.get("order_status", ""))
+    order.pop("order_status", None)
 
     return order
 

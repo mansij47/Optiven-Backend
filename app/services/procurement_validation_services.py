@@ -361,27 +361,141 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             items_created.append(item_id)
             good_items_count += 1
         
-        # ✅ Handle damaged items for Loss Orders
+        # ✅ Handle damaged items for Loss Orders - Create ProductItems with item_ids
+        damaged_loss_item_ids = []
         if damaged_items_for_loss:
+            for item_detail in damaged_items_for_loss:
+                # Create ProductItem for damaged item going to loss
+                loss_item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
+                
+                # Extract item details
+                if isinstance(item_detail, dict):
+                    item_name = item_detail.get("item_name")
+                    serial_no = item_detail.get("serial_no")
+                    batch_number = item_detail.get("batch_number")
+                    unit_price = item_detail.get("unit_price")
+                    is_consumer_returnable = item_detail.get("is_consumer_returnable", data.is_consumer_returnable)
+                    consumer_return_conditions = item_detail.get("consumer_return_conditions", data.consumer_return_conditions or [])
+                    is_seller_returnable = item_detail.get("is_seller_returnable", False)
+                    seller_return_conditions = item_detail.get("seller_return_conditions", [])
+                else:
+                    item_name = getattr(item_detail, "item_name", None)
+                    serial_no = getattr(item_detail, "serial_no", None)
+                    batch_number = getattr(item_detail, "batch_number", None)
+                    unit_price = getattr(item_detail, "unit_price", None)
+                    is_consumer_returnable = getattr(item_detail, "is_consumer_returnable", data.is_consumer_returnable)
+                    consumer_return_conditions = getattr(item_detail, "consumer_return_conditions", data.consumer_return_conditions or [])
+                    is_seller_returnable = getattr(item_detail, "is_seller_returnable", False)
+                    seller_return_conditions = getattr(item_detail, "seller_return_conditions", [])
+                
+                # Create ProductItem with full vendor and warranty info
+                loss_item_data = {
+                    "org_id": org_id,
+                    "store_id": store_id,
+                    "item_id": loss_item_id,
+                    "product_id": product_id,
+                    "item_name": item_name,
+                    "unit_price": unit_price,
+                    "vendor_id": base_order.get("vendor_id"),
+                    "vendor_name": base_order.get("vendor_name"),
+                    "contract_id": base_order.get("contract_id"),
+                    "serial_no": serial_no,
+                    "batch_number": batch_number,
+                    "is_consumer_returnable": is_consumer_returnable,
+                    "consumer_return_conditions": consumer_return_conditions,
+                    "is_seller_returnable": is_seller_returnable,
+                    "seller_return_conditions": seller_return_conditions,
+                    "has_warranty": base_order.get("has_warranty", False) or (base_order.get("warranty_tenure", 0) > 0),
+                    "warranty_tenure": base_order.get("warranty_tenure", 0),
+                    "warranty_unit": base_order.get("warranty_unit", "months"),
+                    "status": "damaged",  # Mark as damaged
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }
+                
+                await db.ProductItems.insert_one(loss_item_data)
+                damaged_loss_item_ids.append(loss_item_id)
+            
+            # Create LossOrders entry with item_ids
             loss_doc = {
-                "product_id": generate_id("LOSS"),
+                "product_id": product_id,
                 "org_id": org_id,
                 "store_id": store_id,
                 "product_name": base_order.get("product_name"),
                 "category": base_order.get("category"),
                 "date_reported": str(datetime.now().date()),
                 "quantity_lost": len(damaged_items_for_loss),
+                "damaged_item_ids": damaged_loss_item_ids,  # Track item IDs
                 "unit": base_order.get("unit"),
                 "unit_price": str(base_order.get("unit_price", "0")),
                 "reason": "Damaged & Not Returnable (Semi-Damaged Batch)",
+                "vendor_id": base_order.get("vendor_id"),
+                "vendor_name": base_order.get("vendor_name"),
+                "contract_id": base_order.get("contract_id"),
             }
             await db["LossOrders"].insert_one(loss_doc)
         
-        # ✅ Handle damaged items for Return to Vendor
+        # ✅ Handle damaged items for Return to Vendor - Create ProductItems with item_ids
+        damaged_return_item_ids = []
         if damaged_items_for_return:
+            for item_detail in damaged_items_for_return:
+                # Create ProductItem for damaged item going to vendor
+                return_item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
+                
+                # Extract item details
+                if isinstance(item_detail, dict):
+                    item_name = item_detail.get("item_name")
+                    serial_no = item_detail.get("serial_no")
+                    batch_number = item_detail.get("batch_number")
+                    unit_price = item_detail.get("unit_price")
+                    is_consumer_returnable = item_detail.get("is_consumer_returnable", data.is_consumer_returnable)
+                    consumer_return_conditions = item_detail.get("consumer_return_conditions", data.consumer_return_conditions or [])
+                    is_seller_returnable = item_detail.get("is_seller_returnable", base_order.get("returnable", False))
+                    seller_return_conditions = item_detail.get("seller_return_conditions", base_order.get("return_conditions", []))
+                else:
+                    item_name = getattr(item_detail, "item_name", None)
+                    serial_no = getattr(item_detail, "serial_no", None)
+                    batch_number = getattr(item_detail, "batch_number", None)
+                    unit_price = getattr(item_detail, "unit_price", None)
+                    is_consumer_returnable = getattr(item_detail, "is_consumer_returnable", data.is_consumer_returnable)
+                    consumer_return_conditions = getattr(item_detail, "consumer_return_conditions", data.consumer_return_conditions or [])
+                    is_seller_returnable = getattr(item_detail, "is_seller_returnable", base_order.get("returnable", False))
+                    seller_return_conditions = getattr(item_detail, "seller_return_conditions", base_order.get("return_conditions", []))
+                
+                # Create ProductItem with full vendor and warranty info
+                return_item_data = {
+                    "org_id": org_id,
+                    "store_id": store_id,
+                    "item_id": return_item_id,
+                    "product_id": product_id,
+                    "item_name": item_name,
+                    "unit_price": unit_price,
+                    "vendor_id": base_order.get("vendor_id"),
+                    "vendor_name": base_order.get("vendor_name"),
+                    "contract_id": base_order.get("contract_id"),
+                    "serial_no": serial_no,
+                    "batch_number": batch_number,
+                    "is_consumer_returnable": is_consumer_returnable,
+                    "consumer_return_conditions": consumer_return_conditions,
+                    "is_seller_returnable": is_seller_returnable,
+                    "seller_return_conditions": seller_return_conditions,
+                    "has_warranty": base_order.get("has_warranty", False) or (base_order.get("warranty_tenure", 0) > 0),
+                    "warranty_tenure": base_order.get("warranty_tenure", 0),
+                    "warranty_unit": base_order.get("warranty_unit", "months"),
+                    "status": "return_to_vendor",  # Mark for vendor return
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }
+                
+                await db.ProductItems.insert_one(return_item_data)
+                damaged_return_item_ids.append(return_item_id)
+            
+            # Create ReturnToVendor entry with item_ids
             return_doc = {
                 "return_id": generate_id("RTV"),
                 "order_id": data.order_id,
+                "product_id": product_id,
+                "vendor_id": base_order.get("vendor_id"),
                 "vendor_name": base_order.get("vendor_name"),
                 "product_name": base_order.get("product_name"),
                 "delivery_date": base_order.get("delivery_date"),
@@ -389,6 +503,7 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 "return_amount": str(len(damaged_items_for_return) * float(base_order.get("unit_price", 0))),
                 "original_quantity": data.expected_quantity,
                 "return_quantity": len(damaged_items_for_return),
+                "returnable_item_ids": damaged_return_item_ids,  # Track item IDs
                 "unit": base_order.get("unit"),
                 "contract_id": base_order.get("contract_id"),
                 "purchase_date": str(datetime.now().date()),
@@ -413,6 +528,10 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
         updated_product = await db.Inventory.find_one({"product_id": product_id, "store_id": store_id})
         total_quantity = updated_product.get("quantity", 0) if updated_product else 0
         
+        # ✅ Check for low stock and send notification if needed
+        from app.services.admin_inventory_service import check_and_notify_low_stock
+        await check_and_notify_low_stock(product_id, store_id)
+        
         # ✅ Detailed message for semi-damaged
         if data.is_semi_damaged:
             message_parts = []
@@ -431,6 +550,8 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             "product_id": product_id,
             "message": final_message,
             "items_created": items_created,
+            "damaged_loss_item_ids": damaged_loss_item_ids,
+            "damaged_return_item_ids": damaged_return_item_ids,
             "total_quantity": total_quantity,
             "average_price": average_price,
             "good_items_count": good_items_count,
@@ -442,25 +563,109 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
 
     # --- LOSS ORDERS CASE ---
     elif data.selected_action == "LossOrders":
+        from app.utils.raise_order import _next_id
+        
+        # Create product in inventory first (for tracking)
+        product_id = await _next_id(db.Inventory, "product_id", "PROD", store_id)
+        
+        # Create ProductItems for each damaged item
+        damaged_loss_item_ids = []
+        for i in range(data.received_quantity):
+            loss_item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
+            
+            # Create ProductItem with vendor and warranty info
+            loss_item_data = {
+                "org_id": org_id,
+                "store_id": store_id,
+                "item_id": loss_item_id,
+                "product_id": product_id,
+                "item_name": base_order.get("product_name"),
+                "unit_price": str(base_order.get("unit_price", "0")),
+                "vendor_id": base_order.get("vendor_id"),
+                "vendor_name": base_order.get("vendor_name"),
+                "contract_id": base_order.get("contract_id"),
+                "serial_no": None,
+                "batch_number": None,
+                "is_consumer_returnable": data.is_consumer_returnable if hasattr(data, 'is_consumer_returnable') else False,
+                "consumer_return_conditions": data.consumer_return_conditions if hasattr(data, 'consumer_return_conditions') else [],
+                "is_seller_returnable": base_order.get("returnable", False),
+                "seller_return_conditions": base_order.get("return_conditions", []),
+                "has_warranty": base_order.get("has_warranty", False) or (base_order.get("warranty_tenure", 0) > 0),
+                "warranty_tenure": base_order.get("warranty_tenure", 0),
+                "warranty_unit": base_order.get("warranty_unit", "months"),
+                "status": "damaged",
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }
+            
+            await db.ProductItems.insert_one(loss_item_data)
+            damaged_loss_item_ids.append(loss_item_id)
+        
+        # Create LossOrders entry with item_ids
         final_doc = {
-            "product_id": generate_id("PRD"),
+            "product_id": product_id,
             "org_id": org_id,
             "store_id": store_id,
             "product_name": base_order.get("product_name"),
             "category": base_order.get("category"),
             "date_reported": str(datetime.now().date()),
             "quantity_lost": data.received_quantity,
+            "damaged_item_ids": damaged_loss_item_ids,
             "unit": base_order.get("unit"),
             "unit_price": str(base_order.get("unit_price", "0")),
             "reason": "Damaged & Not Returnable",
+            "vendor_id": base_order.get("vendor_id"),
+            "vendor_name": base_order.get("vendor_name"),
+            "contract_id": base_order.get("contract_id"),
         }
         target_collection = db["LossOrders"]
 
     # --- RETURN TO VENDOR CASE ---
     elif data.selected_action == "ReturnToVendor":
+        from app.utils.raise_order import _next_id
+        
+        # Create product in inventory first (for tracking)
+        product_id = await _next_id(db.Inventory, "product_id", "PROD", store_id)
+        
+        # Create ProductItems for each damaged returnable item
+        damaged_return_item_ids = []
+        for i in range(data.received_quantity):
+            return_item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
+            
+            # Create ProductItem with vendor and warranty info
+            return_item_data = {
+                "org_id": org_id,
+                "store_id": store_id,
+                "item_id": return_item_id,
+                "product_id": product_id,
+                "item_name": base_order.get("product_name"),
+                "unit_price": str(base_order.get("unit_price", "0")),
+                "vendor_id": base_order.get("vendor_id"),
+                "vendor_name": base_order.get("vendor_name"),
+                "contract_id": base_order.get("contract_id"),
+                "serial_no": None,
+                "batch_number": None,
+                "is_consumer_returnable": data.is_consumer_returnable if hasattr(data, 'is_consumer_returnable') else False,
+                "consumer_return_conditions": data.consumer_return_conditions if hasattr(data, 'consumer_return_conditions') else [],
+                "is_seller_returnable": base_order.get("returnable", False),
+                "seller_return_conditions": base_order.get("return_conditions", []),
+                "has_warranty": base_order.get("has_warranty", False) or (base_order.get("warranty_tenure", 0) > 0),
+                "warranty_tenure": base_order.get("warranty_tenure", 0),
+                "warranty_unit": base_order.get("warranty_unit", "months"),
+                "status": "return_to_vendor",
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }
+            
+            await db.ProductItems.insert_one(return_item_data)
+            damaged_return_item_ids.append(return_item_id)
+        
+        # Create ReturnToVendor entry with item_ids
         final_doc = {
             "return_id": generate_id("RTV"),
             "order_id": data.order_id,
+            "product_id": product_id,
+            "vendor_id": base_order.get("vendor_id"),
             "vendor_name": base_order.get("vendor_name"),
             "product_name": base_order.get("product_name"),
             "delivery_date": base_order.get("delivery_date"),
@@ -468,6 +673,7 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             "return_amount": str(data.received_quantity * float(base_order.get("unit_price", 0))),
             "original_quantity": data.expected_quantity,
             "return_quantity": data.received_quantity,
+            "returnable_item_ids": damaged_return_item_ids,
             "unit": base_order.get("unit"),
             "contract_id": base_order.get("contract_id"),
             "purchase_date": str(datetime.now().date()),
