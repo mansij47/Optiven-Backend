@@ -296,6 +296,28 @@ async def get_return_detail_by_id(request: Request, return_id: str):
     return await procurement_return_services.get_return_by_id(store_id, return_id)
 
 
+#Mark Return to Vendor as Received (Update status to completed)
+@router.patch("/returnToVendor-mark-received")
+async def mark_return_received(request: Request, return_ids: list[str]):
+    user = request.state.user
+    if user.get("role") != "procurement":
+        raise HTTPException(status_code=403, detail="Only procurement users are allowed.")
+
+    store_id = user.get("store_id")
+    return await procurement_return_services.mark_return_received(store_id, return_ids)
+
+
+#Delete Return to Vendor Order
+@router.delete("/returnToVendor-delete/{identifier}")
+async def delete_return_order(request: Request, identifier: str):
+    user = request.state.user
+    if user.get("role") != "procurement":
+        raise HTTPException(status_code=403, detail="Only procurement users are allowed.")
+
+    store_id = user.get("store_id")
+    return await procurement_return_services.delete_return_order(store_id, identifier)
+
+
 #List of Purchase Orders
 @router.get("/purchase-orders")
 async def get_purchase_orders(request: Request):

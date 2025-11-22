@@ -438,13 +438,16 @@ async def delete_return(return_id: str, store_id: str):
 async def mark_return_sent_to_procurement(return_id: str, store_id: str):
     result = await db.ReturnOrders.update_one(
         {"return_id": return_id, "store_id": store_id},
-        {"$set": {"sent_to_procurement": 1}}
+        {"$set": {
+            "sent_to_procurement": 1,
+            "status": "pending"  # Set default status as pending
+        }}
     )
 
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Return order not found for this store")
 
-    return {"message": f"Return order {return_id} marked as sent to procurement"}
+    return {"message": f"Return order {return_id} marked as sent to procurement", "status": "pending"}
 
 async def get_all_procurement_returns(store_id: str, status_filter: str = "all"):
     query = {"sent_to_procurement": 1, "store_id": store_id}

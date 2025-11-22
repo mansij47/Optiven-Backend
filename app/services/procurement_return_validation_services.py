@@ -82,6 +82,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
         
         return {
             "message": message,
+            "status": "completed",
             "details": result
         }
 
@@ -174,7 +175,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
                 "category": product.get("category", "stationery"),
                 "sub_category": product.get("sub_category", "misc"),
                 "delivery_date": product.get("delivery_date", datetime.now().strftime("%Y-%m-%d")),
-                "status": "0",
+                "status": "pending",  # Default status for new vendor returns
                 "return_quantity": product["return_quantity"],
                 "return_amount": str(product.get("return_amount", "0.0")),
                 "original_quantity": product.get("original_quantity", product["return_quantity"]),
@@ -445,4 +446,4 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
         }
     )
 
-    return {"message": f"Validation successful. {action}"}
+    return {"message": f"Validation successful. {action}", "status": "completed"}

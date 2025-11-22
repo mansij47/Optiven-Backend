@@ -490,7 +490,23 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 await db.ProductItems.insert_one(return_item_data)
                 damaged_return_item_ids.append(return_item_id)
             
-            # Create ReturnToVendor entry with item_ids
+            # Create ReturnToVendor entry with item_ids and item details
+            # Collect batch numbers and serial numbers from items
+            batch_numbers = []
+            serial_numbers = []
+            for item_detail in damaged_items_for_return:
+                if isinstance(item_detail, dict):
+                    batch_no = item_detail.get("batch_number")
+                    serial_no = item_detail.get("serial_no")
+                else:
+                    batch_no = getattr(item_detail, "batch_number", None)
+                    serial_no = getattr(item_detail, "serial_no", None)
+                
+                if batch_no:
+                    batch_numbers.append(batch_no)
+                if serial_no:
+                    serial_numbers.append(serial_no)
+            
             return_doc = {
                 "return_id": generate_id("RTV"),
                 "order_id": data.order_id,
@@ -499,11 +515,13 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 "vendor_name": base_order.get("vendor_name"),
                 "product_name": base_order.get("product_name"),
                 "delivery_date": base_order.get("delivery_date"),
-                "status": 1,
+                "status": "pending",  # Default status
                 "return_amount": str(len(damaged_items_for_return) * float(base_order.get("unit_price", 0))),
                 "original_quantity": data.expected_quantity,
                 "return_quantity": len(damaged_items_for_return),
                 "returnable_item_ids": damaged_return_item_ids,  # Track item IDs
+                "batch_numbers": batch_numbers,  # Batch numbers from items
+                "serial_numbers": serial_numbers,  # Serial numbers from items
                 "unit": base_order.get("unit"),
                 "contract_id": base_order.get("contract_id"),
                 "purchase_date": str(datetime.now().date()),
@@ -629,8 +647,34 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
         
         # Create ProductItems for each damaged returnable item
         damaged_return_item_ids = []
-        for i in range(data.received_quantity):
+        batch_numbers = []
+        serial_numbers = []
+        
+        # Use items from frontend if provided, otherwise create default items
+        items_to_create = data.items if data.items else []
+        
+        if not items_to_create:
+            # Create default items if not provided
+            items_to_create = [{"batch_number": None, "serial_no": None} for _ in range(data.received_quantity)]
+        
+        for i, item_detail in enumerate(items_to_create):
             return_item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
+            
+            # Extract batch and serial from item
+            if isinstance(item_detail, dict):
+                batch_no = item_detail.get("batch_number")
+                serial_no = item_detail.get("serial_no")
+                unit_price = item_detail.get("unit_price", str(base_order.get("unit_price", "0")))
+            else:
+                batch_no = getattr(item_detail, "batch_number", None)
+                serial_no = getattr(item_detail, "serial_no", None)
+                unit_price = getattr(item_detail, "unit_price", str(base_order.get("unit_price", "0")))
+            
+            # Collect batch and serial numbers
+            if batch_no:
+                batch_numbers.append(batch_no)
+            if serial_no:
+                serial_numbers.append(serial_no)
             
             # Create ProductItem with vendor and warranty info
             return_item_data = {
@@ -639,12 +683,12 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 "item_id": return_item_id,
                 "product_id": product_id,
                 "item_name": base_order.get("product_name"),
-                "unit_price": str(base_order.get("unit_price", "0")),
+                "unit_price": unit_price,
                 "vendor_id": base_order.get("vendor_id"),
                 "vendor_name": base_order.get("vendor_name"),
                 "contract_id": base_order.get("contract_id"),
-                "serial_no": None,
-                "batch_number": None,
+                "serial_no": serial_no,
+                "batch_number": batch_no,
                 "is_consumer_returnable": data.is_consumer_returnable if hasattr(data, 'is_consumer_returnable') else False,
                 "consumer_return_conditions": data.consumer_return_conditions if hasattr(data, 'consumer_return_conditions') else [],
                 "is_seller_returnable": base_order.get("returnable", False),
@@ -660,7 +704,7 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             await db.ProductItems.insert_one(return_item_data)
             damaged_return_item_ids.append(return_item_id)
         
-        # Create ReturnToVendor entry with item_ids
+        # Create ReturnToVendor entry with item_ids and item details
         final_doc = {
             "return_id": generate_id("RTV"),
             "order_id": data.order_id,
@@ -669,11 +713,13 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             "vendor_name": base_order.get("vendor_name"),
             "product_name": base_order.get("product_name"),
             "delivery_date": base_order.get("delivery_date"),
-            "status": 1,
+            "status": "pending",  # Default status
             "return_amount": str(data.received_quantity * float(base_order.get("unit_price", 0))),
             "original_quantity": data.expected_quantity,
             "return_quantity": data.received_quantity,
             "returnable_item_ids": damaged_return_item_ids,
+            "batch_numbers": batch_numbers,  # Batch numbers from items
+            "serial_numbers": serial_numbers,  # Serial numbers from items
             "unit": base_order.get("unit"),
             "contract_id": base_order.get("contract_id"),
             "purchase_date": str(datetime.now().date()),
