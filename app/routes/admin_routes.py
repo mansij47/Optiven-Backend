@@ -15,7 +15,7 @@ from app.models.admin_model import DepartmentUserCreate, DepartmentUserUpdate, E
 from app.services import notification_service
 from app.utils.old_product import get_old_products, delete_old_products
 from app.services import admin_lossOrders_service
-from app.services.admin_inventory_service import delete_product_service, update_product_by_id, export_inventory_csv, get_product_by_id, get_all_products, add_product_service, get_item_by_id 
+from app.services.admin_inventory_service import delete_product_service, update_product_by_id, export_inventory_csv, get_product_by_id, get_all_products, add_product_service, get_item_by_id, update_item_by_id 
 # from app.services.admin_lossOrders_service import export_loss_orders_csv, get_all_loss_orders_with_metrics 
 from app.services.admin_lossOrders_service import  get_loss_data_by_user
 from app.services.admin_receivedOrders_service import delete_order_by_id, get_all_sales_orders, update_sales_order
@@ -252,6 +252,27 @@ async def fetch_item_by_id(request: Request, item_id: str):
     
     result = await get_item_by_id(item_id, store_id)
     return result.get("item")
+
+@router.patch("/item/{item_id}")
+async def update_item(request: Request, item_id: str, update_data: dict = Body(...)):
+    """
+    Update item details like serial number, vendor, warranty, etc.
+    """
+    from app.models.admin_model import ProductItemUpdateModel
+    
+    user = request.state.user
+
+    if user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Access denied.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+    
+    # Convert dict to ProductItemUpdateModel
+    update_model = ProductItemUpdateModel(**update_data)
+    result = await update_item_by_id(item_id, update_model, store_id)
+    return result
 
 @router.get("/check-serial-number/{serial_no}")
 async def check_serial_number_exists(request: Request, serial_no: str):
