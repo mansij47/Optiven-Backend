@@ -178,8 +178,15 @@ async def generate_return_id():
     else:
         return "RET001"
     
-# --- Helper function to enrich products and calculate total returned amount ---
-async def enrich_products(products: list, return_quantity: int, reason: str):
+# --- Helper function to enrich products with item-level details ---
+async def enrich_products(products: list, return_quantity: int, reason: str, order_id: str = None, store_id: str = None):
+    """
+    Enrich products with item-level tracking including:
+    - Specific item IDs being returned
+    - Vendor information per item
+    - Warranty details per item
+    - Return conditions per item
+    """
     print("Incoming products:", products)
     enriched_products = []
     skipped_products = []  # Track products that are skipped
@@ -243,20 +250,86 @@ async def enrich_products(products: list, return_quantity: int, reason: str):
             })
             continue
 
+        # ✅ ITEM-BASED APPROACH: Get specific item IDs and their details
+        item_ids_to_return = product.get("item_ids", [])
+        items_details = []
+        
+        if order_id and store_id and item_ids_to_return:
+            # Fetch actual item details from ProductItems collection
+            for item_id in item_ids_to_return[:return_quantity]:  # Only get items being returned
+                item = await db.ProductItems.find_one({
+                    "item_id": item_id,
+                    "product_id": product_id,
+                    "store_id": store_id
+                }, {"_id": 0})
+                
+                if item:
+                    items_details.append({
+                        "item_id": item_id,
+                        "vendor_id": item.get("vendor_id"),
+                        "vendor_name": item.get("vendor_name", "Unknown"),
+                        "contract_id": item.get("contract_id"),
+                        "purchase_date": item.get("purchase_date"),
+                        "delivery_date": item.get("delivery_date"),
+                        "unit_price": item.get("unit_price", unit_price),
+                        "batch_number": item.get("batch_number"),
+                        "serial_number": item.get("serial_number"),
+                        "has_warranty": item.get("has_warranty", False),
+                        "warranty_tenure": item.get("warranty_tenure", 0),
+                        "warranty_unit": item.get("warranty_unit", "months"),
+                        "is_consumer_returnable": item.get("is_consumer_returnable", is_customer_returnable),
+                        "consumer_return_conditions": item.get("consumer_return_conditions", consumer_conditions),
+                        "is_seller_returnable": item.get("is_seller_returnable", inventory.get("is_seller_returnable", False)),
+                        "seller_return_conditions": item.get("seller_return_conditions", inventory.get("seller_return_conditions", []))
+                    })
+
         item_amount = (unit_price * return_quantity) - (tax * return_quantity)
         total_amount += item_amount
 
-        enriched_products.append({
+        # Build enriched product with item-level details
+        enriched_product = {
             "product_id": product_id,
             "product_name": product_name,
+            "category": inventory.get("category", product.get("category")),
+            "sub_category": inventory.get("sub_category", product.get("sub_category")),
+            "unit": inventory.get("unit", product.get("unit", "pcs")),
             "return_quantity": return_quantity,
             "unit_price": unit_price,
             "tax": tax,
+            "total_price": item_amount,
+            "return_amount": str(item_amount),
+            "original_quantity": product.get("order_quantity", return_quantity),
             "is_customer_returnable": is_customer_returnable,
             "consumer_return_conditions": consumer_conditions,
             "is_seller_returnable": inventory.get("is_seller_returnable", False),
-            "seller_return_conditions": inventory.get("seller_return_conditions", [])
-        })
+            "seller_return_conditions": inventory.get("seller_return_conditions", []),
+            "return_reason": reason
+        }
+        
+        # ✅ Add item-level tracking information
+        if items_details:
+            enriched_product["item_ids"] = [item["item_id"] for item in items_details]
+            enriched_product["items"] = items_details
+            
+            # Use vendor info from first item (or aggregate if needed)
+            if items_details[0].get("vendor_id"):
+                enriched_product["vendor_id"] = items_details[0]["vendor_id"]
+                enriched_product["vendor_name"] = items_details[0]["vendor_name"]
+                enriched_product["contract_id"] = items_details[0]["contract_id"]
+                enriched_product["purchase_date"] = items_details[0]["purchase_date"]
+                enriched_product["delivery_date"] = items_details[0]["delivery_date"]
+                enriched_product["has_warranty"] = items_details[0]["has_warranty"]
+                enriched_product["warranty_tenure"] = items_details[0]["warranty_tenure"]
+                enriched_product["warranty_unit"] = items_details[0]["warranty_unit"]
+        else:
+            # Fallback: If no item details, try to get from product or use defaults
+            enriched_product["item_ids"] = item_ids_to_return[:return_quantity]
+            enriched_product["vendor_name"] = product.get("vendor_name", "Unknown")
+            enriched_product["has_warranty"] = product.get("has_warranty", False)
+            enriched_product["warranty_tenure"] = product.get("warranty_tenure", 0)
+            enriched_product["warranty_unit"] = product.get("warranty_unit", "months")
+
+        enriched_products.append(enriched_product)
 
     print("Enriched Products:", enriched_products)
     print("Skipped Products:", skipped_products)

@@ -58,6 +58,7 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
     """
     Check if product quantity is at or below min_stock threshold.
     If yes, send notification to admin and procurement, and update status to 'running-out'.
+    Sends notification only once when status changes to avoid spam.
     """
     try:
         product = await db.Inventory.find_one({"product_id": product_id, "store_id": store_id})
@@ -66,38 +67,56 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
         
         quantity = product.get("quantity", 0)
         min_stock = product.get("min_stock", 4)
+        current_status = product.get("status", "")
+        
+        print(f"🔍 Checking low stock for {product_id}: quantity={quantity}, min_stock={min_stock}, status={current_status}")
         
         # Check if quantity has reached or dropped below min_stock threshold
         if quantity <= min_stock:
             from app.services.notification_service import create_notification
-            from app.models.notification_model import NotificationBase, Sender
+            from app.models.notification_model import NotificationBase, UserInfo
             
-            # Update product status to "running-out"
-            await db.Inventory.update_one(
-                {"product_id": product_id, "store_id": store_id},
-                {"$set": {"status": "running-out", "updated_at": datetime.utcnow()}}
-            )
-            
-            # Send notification to admin and procurement
-            notification_data = NotificationBase(
-                title="⚠️ Low Stock Alert",
-                description=f"Product '{product.get('product_name')}' is running out of stock! Current quantity: {quantity}, Minimum threshold: {min_stock}. Please restock immediately.",
-                sender=Sender(
-                    role="system",
-                    id="inventory_monitor",
-                    store_id=store_id,
-                    email="system@optiven.com"
-                ),
-                emails=[]  # Will send to all admin and procurement users
-            )
-            
-            await create_notification(
-                notification=notification_data,
-                admin=True,
-                procurement=True
-            )
-            
-            print(f"✅ Low stock alert sent for product {product_id}. Quantity: {quantity}, Min: {min_stock}")
+            # ✅ Only send notification if status is NOT already "running-out" (avoid duplicate alerts)
+            if current_status != "running-out":
+                # Update product status to "running-out"
+                await db.Inventory.update_one(
+                    {"product_id": product_id, "store_id": store_id},
+                    {"$set": {"status": "running-out", "updated_at": datetime.utcnow()}}
+                )
+                
+                # Send notification to admin and procurement
+                product_name = product.get("product_name", "Unknown Product")
+                category = product.get("category", "")
+                
+                notification_data = NotificationBase(
+                    sender=UserInfo(
+                        role="system",
+                        id="inventory_monitor",
+                        store_id=store_id
+                    ),
+                    type_of_notification="Inventory Alert",
+                    title="⚠️ Low Stock Alert",
+                    message=f"Product '{product_name}' (Category: {category}) is running low! ",
+                    emails=[]  # Will send to all admin and procurement users in the store
+                )
+                
+                result = await create_notification(
+                    notification=notification_data,
+                    admin=True,
+                    procurement=True
+                )
+                
+                print(f"✅ Low stock alert sent for product {product_id} ({product_name}). Quantity: {quantity}, Min: {min_stock}. Notifications created: {result}")
+            else:
+                print(f"⏭️ Skipping notification for {product_id} - already in 'running-out' status")
+        else:
+            # ✅ If quantity is back above min_stock, reset status to "Stock-in"
+            if current_status == "running-out":
+                await db.Inventory.update_one(
+                    {"product_id": product_id, "store_id": store_id},
+                    {"$set": {"status": "Stock-in", "updated_at": datetime.utcnow()}}
+                )
+                print(f"✅ Product {product_id} restocked. Status reset to Stock-in.")
     
     except Exception as e:
         print(f"⚠️ Failed to check/notify low stock for {product_id}: {str(e)}")
@@ -132,7 +151,7 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
 
             # Update product quantity and average_price
             await db.Inventory.update_one(
-                {"_id": existing_product["_id"]},
+                {"product_id": product_id, "store_id": store_id},
                 {
                     "$set": {
                         "quantity": new_quantity,
@@ -141,6 +160,9 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
                     }
                 }
             )
+            
+            # ✅ Check for low stock after update
+            await check_and_notify_low_stock(product_id, store_id)
 
             return {
                 "message": f"Existing product '{product_dict['product_name']}' updated successfully",
@@ -173,6 +195,9 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
             {"product_id": new_product_id, "store_id": store_id},
             {"$set": {"average_price": average_price}}
         )
+        
+        # ✅ Check for low stock after adding new product
+        await check_and_notify_low_stock(new_product_id, store_id)
 
         return {
             "message": "New product added successfully with items",
@@ -237,14 +262,17 @@ async def get_all_products(store_id: str):
     Retrieves all products with their item count.
     Shows hierarchical structure: Product → Items
     Product quantity is always synced with actual item count.
+    Sorted by: Stock-out/running-out first, then by created_at descending.
     """
     try:
         products_cursor = (
             db["Inventory"].find({"store_id": store_id}, {"_id": 0})
-            .sort("updated_at", -1)
+            .sort("created_at", -1)  # Sort by creation time (newest first)
         )
 
         products = []
+        low_stock_checks = []  # Collect products that need low stock checking
+        
         async for product in products_cursor:
             # Get total items count for this product (this is the real quantity)
             items_count = await db.ProductItems.count_documents({
@@ -264,13 +292,51 @@ async def get_all_products(store_id: str):
 
             # ✅ Quantity is ALWAYS mapped to available ProductItems count
             product["quantity"] = available_items  # Use available items, not total
-            product["status"] = "Stock-in" if available_items > 0 else "Stock-out"
+            
+            # ✅ Update quantity in database
+            await db.Inventory.update_one(
+                {"product_id": product.get("product_id"), "store_id": store_id},
+                {"$set": {"quantity": available_items, "updated_at": datetime.utcnow()}}
+            )
+            
+            # ✅ Collect products for low stock checking (batch process later)
+            low_stock_checks.append((product.get("product_id"), store_id, available_items, product.get("min_stock", 4), product.get("status", "")))
+            
             product["average_price"] = average_price
             product["total_items"] = items_count
             product["available_items"] = available_items
             product.pop("_id", None)
 
             products.append(product)
+
+        # ✅ Batch process low stock checks (only once per API call)
+        print(f"🔍 Checking low stock for {len(low_stock_checks)} products...")
+        for product_id, store_id, quantity, min_stock, current_status in low_stock_checks:
+            await check_and_notify_low_stock(product_id, store_id)
+        
+        # ✅ Refresh product statuses after low stock checks
+        for product in products:
+            updated_product = await db.Inventory.find_one(
+                {"product_id": product.get("product_id"), "store_id": store_id},
+                {"_id": 0, "status": 1}
+            )
+            if updated_product:
+                product["status"] = updated_product.get("status", "Stock-in") if product["quantity"] > 0 else "Stock-out"
+
+        # ✅ Sort products: Stock-out and running-out at the top, then by created_at
+        def sort_key(product):
+            status = product.get("status", "Stock-in")
+            created_at = product.get("created_at", datetime.min)
+            
+            # Priority: 1 = Stock-out/running-out (top), 2 = Stock-in (bottom)
+            if status in ["Stock-out", "running-out"]:
+                priority = 1
+            else:
+                priority = 2
+            
+            return (priority, -created_at.timestamp() if isinstance(created_at, datetime) else 0)
+        
+        products.sort(key=sort_key)
 
         return {
             "total_count": len(products),
@@ -320,6 +386,9 @@ async def get_product_by_id(product_id: str, store_id: str):
         product_data["average_price"] = average_price
         product_data["total_items"] = len(items)  # Total including sold
         product_data["available_items"] = available_items
+        
+        # ✅ Check for low stock and send notification if needed
+        await check_and_notify_low_stock(product_id, store_id)
 
         return {
             "product": product_data,

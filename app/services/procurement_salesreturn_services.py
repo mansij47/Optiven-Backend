@@ -54,15 +54,24 @@ async def get_return_order_detail(return_id: str, store_id: str) -> ReturnOrderD
     if not order:
         raise HTTPException(status_code=404, detail="Return order not found")
 
-    # Parse product list
+    # Parse product list with item tracking
     product_list = order.get("product", [])
-    parsed_products = [ProductDetails(
-        product_id=prod.get("product_id"),
-        product_name=prod.get("product_name"),
-        quantity=prod.get("quantity"),
-        unit_price=prod.get("unit_price"),
-        tax=prod.get("tax")
-    ) for prod in product_list]
+    parsed_products = []
+    for prod in product_list:
+        product_detail = ProductDetails(
+            product_id=prod.get("product_id"),
+            product_name=prod.get("product_name"),
+            quantity=prod.get("quantity"),
+            unit_price=prod.get("unit_price"),
+            tax=prod.get("tax")
+        )
+        
+        # ✅ Add item tracking information if available
+        item_ids = prod.get("item_ids", [])
+        if hasattr(product_detail, 'item_ids'):
+            product_detail.item_ids = item_ids
+        
+        parsed_products.append(product_detail)
 
     return ReturnOrderDetail(
         return_id=order.get("return_id"),

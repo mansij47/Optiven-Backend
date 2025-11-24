@@ -195,8 +195,9 @@ async def add_return(data: ReturnOrderRequest, store_id: str):
             detail=f"Error processing return for order {data.order_id}: {str(e.detail)}"
         )
 
+    # ✅ Pass order_id and store_id to enrich_products for item-level tracking
     enriched_products, total_amount, skipped_products = await enrich_products(
-        products_list, data.return_quantity, data.reason
+        products_list, data.return_quantity, data.reason, order_id=data.order_id, store_id=store_id
     )
     
     if not enriched_products:
@@ -210,29 +211,43 @@ async def add_return(data: ReturnOrderRequest, store_id: str):
     return_doc = build_return_doc(data, order, enriched_products, total_amount, return_id, store_id)
     await db.ReturnOrders.insert_one(return_doc)
 
-    # Check return_quantity against order_quantity
+    # ✅ ITEM-BASED APPROACH: Update order by removing returned item_ids
     updated_products = []
-    should_delete = True  # Assume deletion unless a product still has quantity left
+    should_delete = True  # Assume deletion unless a product still has items left
 
     for product in products_list:
+        product_id = product.get("product_id")
         order_qty = int(product.get("order_quantity", 0))
+        product_item_ids = product.get("item_ids", [])
+        
         if order_qty <= 0:
             continue
         
-        if data.return_quantity >= order_qty:
-            # The product is fully returned, so skip adding it to updated_products
+        # Find which items are being returned for this product
+        returned_item_ids = []
+        for enriched in enriched_products:
+            if enriched.get("product_id") == product_id:
+                returned_item_ids = enriched.get("item_ids", [])
+                break
+        
+        # Remove returned item_ids from product's item_ids list
+        remaining_item_ids = [item_id for item_id in product_item_ids if item_id not in returned_item_ids]
+        
+        if data.return_quantity >= order_qty or len(remaining_item_ids) == 0:
+            # The product is fully returned, skip adding it to updated_products
             continue
         else:
-            # Partial return, update the order_quantity
-            product["order_quantity"] = order_qty - data.return_quantity
+            # Partial return, update the order_quantity and item_ids
+            product["order_quantity"] = len(remaining_item_ids)
+            product["item_ids"] = remaining_item_ids
             updated_products.append(product)
-            should_delete = False  # Since at least one product still has remaining quantity
+            should_delete = False  # Since at least one product still has remaining items
 
     if should_delete:
         # Delete the entire order
         await db.SalesOrders.delete_one({"order_id": data.order_id, "store_id": store_id})
     else:
-        # Update the order with the new product quantities
+        # Update the order with the new product quantities and item_ids
         await db.SalesOrders.update_one(
             {"order_id": data.order_id, "store_id": store_id},
             {"$set": {"products": updated_products}}
