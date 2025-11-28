@@ -126,6 +126,7 @@ async def raise_order_request_service(data: dict, org_id: str, store_id: str, re
                     "quantity": new_quantity,
                     "unit": data.get("unit", "pcs"),
                     "category": data.get("category", "general"),
+                    "sub_category": data.get("sub_category", ""),
                     "estimate_date": data.get("estimate_date", datetime.utcnow().strftime("%Y-%m-%d")),
                     "requested_by": requested_by,
                     "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -145,6 +146,7 @@ async def raise_order_request_service(data: dict, org_id: str, store_id: str, re
             "quantity": data["quantity"],
             "unit": data.get("unit", "pcs"),
             "category": data.get("category", "general"),
+            "sub_category": data.get("sub_category", ""),
             "estimate_date": data.get("estimate_date", datetime.utcnow().strftime("%Y-%m-%d")),
             "requested_by": requested_by,
             "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")

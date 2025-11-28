@@ -216,6 +216,7 @@ class NewRaiseOrderRequest(BaseModel):
     quantity: float
     unit: Optional[str] = "pcs"  # Default unit if not specified
     category: Optional[str] = "general"
+    sub_category: Optional[str] = ""
     estimate_date: Optional[str] = None
 
 class OrderProductInput(BaseModel):
