@@ -239,7 +239,7 @@ async def update_contract_status_route(
 
     notification_response = await create_notification(
         notification=notification,
-        sales=True,         # 👈 notify Sales
+        # sales=True,         # 👈 notify Sales
         admin=True    # 👈 also notify Procurement
     )
 
