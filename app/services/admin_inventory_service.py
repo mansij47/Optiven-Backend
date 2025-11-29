@@ -180,7 +180,7 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
         product_dict["org_id"] = org_id
         product_dict["created_at"] = datetime.utcnow()
         product_dict["updated_at"] = datetime.utcnow()
-        product_dict["status"] = "Stock-in" if quantity > 0 else "Stock-out"
+        product_dict["status"] = "Stock-in" if quantity > 1 else "Stock-out"
         product_dict["average_price"] = 0.0  # Will be updated after items are created
 
         # Insert product
@@ -321,7 +321,7 @@ async def get_all_products(store_id: str):
                 {"_id": 0, "status": 1}
             )
             if updated_product:
-                product["status"] = updated_product.get("status", "Stock-in") if product["quantity"] > 0 else "Stock-out"
+                product["status"] = updated_product.get("status", "Stock-in") if product["quantity"] > 1 else "Stock-out"
 
         # ✅ Sort products: Stock-out and running-out at the top, then by created_at
         def sort_key(product):
@@ -382,7 +382,7 @@ async def get_product_by_id(product_id: str, store_id: str):
         
         # Update product quantity to match available items count (not total items)
         product_data["quantity"] = available_items  # ✅ Show only available items
-        product_data["status"] = "Stock-in" if available_items > 0 else "Stock-out"
+        product_data["status"] = "Stock-in" if available_items > 1 else "Stock-out"
         product_data["average_price"] = average_price
         product_data["total_items"] = len(items)  # Total including sold
         product_data["available_items"] = available_items
@@ -511,7 +511,7 @@ async def export_inventory_csv(store_id: str, org_id: str):
             })
             
             quantity = int(doc.get("quantity", 0)) if doc.get("quantity") else 0
-            status = "Stock-in" if available_items > 0 else "Stock-out"
+            status = "Stock-in" if available_items > 1 else "Stock-out"
 
             writer.writerow([
                 doc.get("org_id", ""),
@@ -749,7 +749,7 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None):
                 "$set": {
                     "quantity": remaining_available,
                     "updated_at": datetime.utcnow(),
-                    "status": "Stock-in" if remaining_available > 0 else "Stock-out"
+                    "status": "Stock-in" if remaining_available > 1 else "Stock-out"
                 }
             }
         )
@@ -819,7 +819,7 @@ async def mark_items_as_sold_bulk(product_id: str, quantity: int, store_id: str,
                 "$set": {
                     "quantity": remaining_available,
                     "updated_at": datetime.utcnow(),
-                    "status": "Stock-in" if remaining_available > 0 else "Stock-out"
+                    "status": "Stock-in" if remaining_available > 1 else "Stock-out"
                 }
             }
         )
@@ -930,7 +930,7 @@ async def handle_customer_return(
                 "$set": {
                     "quantity": available_count,
                     "updated_at": datetime.utcnow(),
-                    "status": "Stock-in" if available_count > 0 else "Stock-out"
+                    "status": "Stock-in" if available_count > 1 else "Stock-out"
                 }
             }
         )

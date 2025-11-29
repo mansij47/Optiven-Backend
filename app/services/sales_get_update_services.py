@@ -378,7 +378,7 @@ async def get_all_products(store_id: str):
             
             # Update quantity to reflect actual available items
             product["quantity"] = available_items_count
-            product["status"] = "Stock-in" if available_items_count > 0 else "Stock-out"
+            product["status"] = "Stock-in" if available_items_count > 1 else "Stock-out"
             
             # ✅ Add item-level metadata from sample item
             if sample_item:

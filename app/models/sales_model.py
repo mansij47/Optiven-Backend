@@ -61,7 +61,9 @@ class LoginModel(BaseModel):
 
 class RequestOrderModel(BaseModel):
     order_id: str             # To fetch product info
-    estimate_date: str        # Given by user in request 
+    estimate_date: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class ReturnOrder(BaseModel):
     return_id: str
