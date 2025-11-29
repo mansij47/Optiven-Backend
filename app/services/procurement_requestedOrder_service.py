@@ -8,7 +8,10 @@ async def get_all_requested_orders(store_id: str):
     orders = []
     cursor = requested_orders_collection.find(
         {"store_id": store_id}
-    ).sort("_id", -1)  # 👈 reverse order, latest first
+    ).sort([
+        ("updated_at", -1),
+        ("created_at", -1)
+    ])  # 👈 Sort by updated_at (desc) to show recently updated requests first, fallback to created_at
     
     async for order in cursor:
         order["_id"] = str(order["_id"])  # Convert ObjectId to string

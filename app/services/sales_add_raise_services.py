@@ -1,6 +1,7 @@
 from datetime import datetime
 from app.db import db
 from fastapi import HTTPException
+from pymongo import ReturnDocument
 from app.models.sales_model import ReturnOrderRequest, SendToProcurement
 from app.utils.sales_utils import enrich_products, fetch_inventory_details, generate_customer_id, generate_order_id, build_product_detail, generate_request_id, generate_return_id
 
@@ -94,40 +95,88 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
         "requested_by": requester
     }
 
+# async def raise_request_order_service(order_id: str, estimate_date: str, org_id: str, store_id: str, requester: dict):
+#     request_data = await prepare_request_data(order_id, store_id, estimate_date, org_id, requester)
+    
+#     # Check if product already exists in requested orders
+#     existing_request = await db.RequestedOrders.find_one({
+#         "product_name": request_data["product_name"],
+#         "store_id": store_id,
+#         "org_id": org_id
+#     })
+    
+#     if existing_request:
+#         # Update existing request: add quantities and update other fields
+#         new_quantity = existing_request.get("quantity", 0) + request_data["quantity"]
+        
+#         await db.RequestedOrders.update_one(
+#             {"_id": existing_request["_id"]},
+#             {
+#                 "$set": {
+#                     "quantity": new_quantity,
+#                     "estimate_date": estimate_date,
+#                     "requested_by": requester,
+#                     "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+#                 }
+#             }
+#         )
+#         return existing_request["request_id"]
+#     else:
+#         # Create new request
+#         request_id = await generate_request_id()
+#         request_data["request_id"] = request_id
+#         request_data["created_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        
+#         await db.RequestedOrders.insert_one(request_data)
+#         return request_id
+
+
 async def raise_request_order_service(order_id: str, estimate_date: str, org_id: str, store_id: str, requester: dict):
     request_data = await prepare_request_data(order_id, store_id, estimate_date, org_id, requester)
-    
-    # Check if product already exists in requested orders
-    existing_request = await db.RequestedOrders.find_one({
-        "product_name": request_data["product_name"],
+
+    # ---- Minimal hardening ----
+    qty = int(request_data.get("quantity", 0))
+    if qty < 0:
+        raise ValueError("quantity cannot be negative")
+
+    # Build a deterministic matcher (add category if present in your data)
+    matcher = {
         "store_id": store_id,
-        "org_id": org_id
+        "org_id": org_id,
+        "product_name": request_data["product_name"],
+    }
+    if request_data.get("category"):
+        matcher["category"] = request_data["category"]
+
+    # Prepare $setOnInsert with all fields from request_data except 'quantity'
+    insert_snapshot = dict(request_data)  # shallow copy
+    insert_snapshot.pop("quantity", None)  # quantity will be handled by $inc only
+    insert_snapshot.update({
+        "request_id": await generate_request_id(),
+        "order_id": order_id,
+        "created_at": datetime.utcnow(),   # store real datetimes; format only at read time
     })
-    
-    if existing_request:
-        # Update existing request: add quantities and update other fields
-        new_quantity = existing_request.get("quantity", 0) + request_data["quantity"]
-        
-        await db.RequestedOrders.update_one(
-            {"_id": existing_request["_id"]},
-            {
-                "$set": {
-                    "quantity": new_quantity,
-                    "estimate_date": estimate_date,
-                    "requested_by": requester,
-                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-                }
-            }
-        )
-        return existing_request["request_id"]
-    else:
-        # Create new request
-        request_id = await generate_request_id()
-        request_data["request_id"] = request_id
-        request_data["created_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        
-        await db.RequestedOrders.insert_one(request_data)
-        return request_id
+
+    # One atomic upsert handles both paths:
+    # - If exists: increments quantity + updates mutable fields + updated_at
+    # - If not exists: inserts snapshot + sets created_at + then $inc sets quantity from 0 -> qty
+    doc = await db.RequestedOrders.find_one_and_update(
+        filter=matcher,
+        update={
+            "$inc": {"quantity": qty},  # ✅ atomic; no race conditions
+            "$set": {
+                "estimate_date": estimate_date,
+                "requested_by": requester,
+                "updated_at": datetime.utcnow(),  # ✅ real datetime
+            },
+            "$setOnInsert": insert_snapshot,
+        },
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+
+    return doc["request_id"]
+
 
 # --- Helper function to fetch and validate the sales order ---
 async def fetch_sales_order(order_id: str, store_id: str):
