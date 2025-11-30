@@ -6,6 +6,51 @@ from app.models.procurement_models import PurchaseOrderValidationInput, Purchase
 import uuid
 from datetime import datetime
 
+
+async def update_sales_orders_on_inventory_change(product_name: str, product_id: str, store_id: str):
+    """
+    Update sales orders when inventory is added/updated:
+    - Populate product_id (was empty for preorders)
+    - Change type from 'preorder' to 'order'
+    - Change status from 'Preorder' to 'Stock-in'
+    Match by product_name (case-insensitive) since preorders have empty product_id
+    """
+    # Find all preorder sales orders with this product (case-insensitive match)
+    preorder_orders = db.SalesOrders.find({
+        "store_id": store_id,
+        "type": "preorder",
+        "products.product_name": {"$regex": f"^{product_name}$", "$options": "i"}
+    })
+    
+    async for order in preorder_orders:
+        # Update the order type and status
+        await db.SalesOrders.update_one(
+            {"_id": order["_id"]},
+            {
+                "$set": {
+                    "type": "order",
+                    "status": "Stock-in",
+                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                }
+            }
+        )
+        
+        # Update product_id and product_status for matching products in the order
+        updated_products = []
+        for product in order.get("products", []):
+            if product.get("product_name", "").lower() == product_name.lower():
+                product["product_id"] = product_id  # Populate the product_id from inventory
+                product["product_status"] = "Stock-in"
+            updated_products.append(product)
+        
+        await db.SalesOrders.update_one(
+            {"_id": order["_id"]},
+            {"$set": {"products": updated_products}}
+        )
+    
+    print(f"[INFO] Updated preorder sales orders for product: {product_name}, assigned product_id: {product_id}")
+
+
 async def validate_purchase_order_preview(
     data: PurchaseOrderValidationInput, store_id: str, org_id: str
 ):
@@ -139,11 +184,11 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
         from app.models.admin_model import Product
         from app.utils.raise_order import _next_id
         
-        # ✅ Check if product already exists in inventory
+        # ✅ Check if product already exists in inventory (case-insensitive)
+        product_name = base_order.get("product_name")
         existing_product = await db.Inventory.find_one({
             "store_id": store_id,
-            "product_name": base_order.get("product_name"),
-            "category": base_order.get("category")
+            "product_name": {"$regex": f"^{product_name}$", "$options": "i"}
         })
         
         if existing_product:
@@ -166,6 +211,9 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                     }
                 }
             )
+            
+            # ✅ Update any preorder sales orders for this product
+            await update_sales_orders_on_inventory_change(base_order.get("product_name"), existing_product["product_id"], store_id)
         else:
             # Product doesn't exist - CREATE new one
             product_id = await _next_id(db.Inventory, "product_id", "PROD", store_id)
@@ -191,6 +239,9 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             
             # Insert product into Inventory
             await db.Inventory.insert_one(product_dict)
+            
+            # ✅ Update any preorder sales orders for this product
+            await update_sales_orders_on_inventory_change(base_order.get("product_name"), product_id, store_id)
         
         # ✅ Create individual ProductItems with user-edited details from frontend
         items_created = []

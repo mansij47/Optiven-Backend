@@ -85,7 +85,8 @@ async def get_all_sales_orders(store_id: str):
             })
 
             # Determine product_status based on available items
-            product_status = "Stock-out" if available_items_count < ordered_quantity else "Stock-in"
+            # Business rule: if available quantity is 1 (or 0), mark Stock-out
+            product_status = "Stock-out" if available_items_count <= 1 else "Stock-in"
             product["product_status"] = product_status
             
             # ✅ ITEM-BASED APPROACH: Add item details for tracking (only basic info for list view)
@@ -584,7 +585,8 @@ async def get_sales_order_by_id(order_id: str, store_id: str):
         })
 
         # Determine product status based on available items
-        product_status = "Stock-out" if available_items_count < ordered_quantity else "Stock-in"
+        # Business rule: if available quantity is 1 (or 0), mark Stock-out
+        product_status = "Stock-out" if available_items_count <= 1 else "Stock-in"
         product["product_status"] = product_status
         
         # ✅ ITEM-BASED APPROACH: Fetch full item details if item_ids exist
