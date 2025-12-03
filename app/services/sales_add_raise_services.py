@@ -9,16 +9,23 @@ async def add_sales_order(order_data: dict, store_id: str):
     # Generate customer_id
     customer_id = await generate_customer_id()
 
-    # Process products
-    final_products, subtotal = await process_products(order_data.get("products", []), store_id)
+    # Process products and detect preorder/stock-out condition
+    final_products, subtotal, stock_out_or_preorder = await process_products(order_data.get("products", []), store_id)
 
-    print(f"Final products: {final_products}")
+    # print(f"[DEBUG] Final products after processing: {final_products}")
     # Fill order fields
     order_data["products"] = final_products
     order_data["total_order_price"] = round(subtotal, 2)
     order_data["order_id"] = await generate_order_id()
     order_data["customer_id"] = customer_id
-    order_data["status"] = "received"  # Changed from order_status to status
+    
+    # Set type and status based on inventory availability
+    if stock_out_or_preorder:
+        order_data["type"] = "preorder"
+        order_data["status"] = "Preorder"  # Changed from "Stock-out" to "Preorder"
+    else:
+        order_data["type"] = "order"
+        order_data["status"] = "Stock-in"
     order_data["store_id"] = store_id
 
     # Fix: Collect return conditions from all products
@@ -36,27 +43,93 @@ async def add_sales_order(order_data: dict, store_id: str):
 async def process_products(products: list, store_id: str):
     final_products = []
     subtotal = 0.0
+    stock_out_or_preorder = False
 
+    # print(f"[DEBUG] Incoming products to process: {products}")
+    
     for prod in products:
-        product_id = prod["product_id"]
+        product_id = prod.get("product_id", "")
         order_quantity = prod["quantity"]
+        
+        # print(f"[DEBUG] Processing product: product_id='{product_id}', product_name='{prod.get('product_name')}', quantity={order_quantity}")
 
-        inventory_data = await fetch_inventory_details(product_id, store_id)
+        # Check if product_id is empty (preorder case) - skip inventory lookup
+        if not product_id or product_id.strip() == "":
+            # Product not found in inventory -> preorder
+            # Leave product_id empty - will be populated when inventory is created
+            # Try multiple field names for product name
+            product_name = (prod.get("product_name") or 
+                          prod.get("name") or 
+                          prod.get("product") or 
+                          "Unknown")
+            # print(f"Product not in inventory (empty product_id), creating preorder: {prod}")
+            # print(f"[DEBUG] Extracted product_name: {product_name}")
+            
+            product_detail = {
+                "product_id": "",  # Empty - will be updated when inventory is added
+                "product_name": product_name,
+                "unit_price": 0,
+                "category": prod.get("category", ""),
+                "order_quantity": order_quantity,
+                "inventory_quantity": 0,
+                "tax": 0,
+                "unit": prod.get("unit", "pcs"),
+                "consumer_return_conditions": [],
+                "product_status": "Preorder"
+            }
+            stock_out_or_preorder = True
+            final_products.append(product_detail)
+            continue  # Skip to next product
 
-        product_detail, total_with_tax = build_product_detail(
-            inventory_item=inventory_data["inventory_item"],
-            product_id=product_id,
-            unit_price=inventory_data["unit_price"],
-            product_tax=inventory_data["product_tax"],
-            order_quantity=order_quantity,
-            inventory_quantity=inventory_data["inventory_quantity"],
-            consumer_return_conditions=inventory_data["consumer_return_conditions"]
-        )
+        try:
+            inventory_data = await fetch_inventory_details(product_id, store_id)
 
-        subtotal += total_with_tax
-        final_products.append(product_detail)
+            product_detail, total_with_tax = build_product_detail(
+                inventory_item=inventory_data["inventory_item"],
+                product_id=product_id,
+                unit_price=inventory_data["unit_price"],
+                product_tax=inventory_data["product_tax"],
+                order_quantity=order_quantity,
+                inventory_quantity=inventory_data["inventory_quantity"],
+                consumer_return_conditions=inventory_data["consumer_return_conditions"]
+            )
 
-    return final_products, subtotal
+            # Check inventory status and quantity
+            inventory_status = inventory_data["inventory_item"].get("status", "")
+            
+            # If inventory is Stock-out OR insufficient quantity -> mark as Preorder
+            if inventory_status in ["Stock-out", "stock-out", "stockout"] or inventory_data["inventory_quantity"] < order_quantity:
+                product_detail["product_status"] = "Stock-out"  # Changed from "Stock-out" to "Preorder"
+                stock_out_or_preorder = True
+            else:
+                product_detail["product_status"] = "Stock-in"
+
+            subtotal += total_with_tax
+            final_products.append(product_detail)
+            
+        except HTTPException:
+            # Product not found in inventory -> preorder
+            # Leave product_id empty - will be populated when inventory is created
+            product_name = prod.get("product_name") or prod.get("name") or "Unknown"
+            print(f"Product not in inventory, creating preorder: {prod}")
+            print(f"[DEBUG] Extracted product_name: {product_name}")
+            
+            product_detail = {
+                "product_id": "",  # Empty - will be updated when inventory is added
+                "product_name": product_name,
+                "unit_price": 0,
+                "category": prod.get("category", ""),
+                "order_quantity": order_quantity,
+                "inventory_quantity": 0,
+                "tax": 0,
+                "unit": prod.get("unit", "pcs"),
+                "consumer_return_conditions": [],
+                "product_status": "Preorder"
+            }
+            stock_out_or_preorder = True
+            final_products.append(product_detail)
+
+    return final_products, subtotal, stock_out_or_preorder
 
 
 
@@ -71,19 +144,41 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
     unit = "pcs"  # Hardcoded, adjust if needed
     order_quantity = product.get("order_quantity", 0)
 
-    inventory_item = await db.Inventory.find_one({"product_name": product_name, "store_id": store_id})
+    # print(f"[DEBUG] Preparing request for product: {product_name}, order_quantity: {order_quantity}")
+
+    # Try to find inventory item (may not exist for preorders) - case-insensitive
+    inventory_item = await db.Inventory.find_one({
+        "product_name": {"$regex": f"^{product_name}$", "$options": "i"},
+        "store_id": store_id
+    })
+    
+    # Determine requested quantity based on order type and inventory status
     if not inventory_item:
-        raise HTTPException(status_code=404, detail="Product not found in inventory.")
+        # Product not in inventory at all (preorder) - request full order quantity
+        # print(f"[DEBUG] Product not found in inventory - requesting full order quantity: {order_quantity}")
+        requested_quantity = order_quantity
+    else:
+        # Check inventory status and quantity
+        inventory_status = inventory_item.get("status", "")
+        inventory_quantity = int(inventory_item.get("quantity", 0)) if inventory_item.get("quantity") else 0
+        min_stock = int(inventory_item.get("min_stock", 0)) if inventory_item.get("min_stock") else 0
+        
+        # print(f"[DEBUG] Inventory found - status: {inventory_status}, quantity: {inventory_quantity}, min_stock: {min_stock}")
+        
+        # If inventory is Stock-out OR quantity is below min_stock OR insufficient for order, request what's needed
+        if (inventory_status in ["Stock-out", "stock-out", "stockout"] or 
+            inventory_quantity < min_stock or 
+            inventory_quantity < order_quantity):
+            # Need more stock - request full order quantity
+            # print(f"[DEBUG] Need more stock (status={inventory_status}, qty={inventory_quantity}, min={min_stock}, order={order_quantity}) - requesting: {order_quantity}")
+            requested_quantity = order_quantity
+        else:
+            # Sufficient stock available
+            requested_quantity = 0
+            # print(f"[DEBUG] Sufficient stock available - requested: {requested_quantity}")
 
-    try:
-        inventory_quantity = int(inventory_item.get("quantity", 0))
-    except (ValueError, TypeError):
-        inventory_quantity = 0
-
-    requested_quantity = max(order_quantity - inventory_quantity, 0)
-    # if requested_quantity <= 0:
-    #     raise HTTPException(status_code=400, detail="No extra quantity to request.(Inventory has enough stock)")
-
+    # print(f"[DEBUG] Final requested_quantity: {requested_quantity}")
+    
     return {
         "org_id": org_id,
         "store_id": store_id,
@@ -134,10 +229,17 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
 async def raise_request_order_service(order_id: str, estimate_date: str, org_id: str, store_id: str, requester: dict):
     request_data = await prepare_request_data(order_id, store_id, estimate_date, org_id, requester)
 
+    # print(f"[DEBUG] Request data prepared: {request_data}")
+
     # ---- Minimal hardening ----
     qty = int(request_data.get("quantity", 0))
     if qty < 0:
         raise ValueError("quantity cannot be negative")
+    
+    if qty == 0:
+        raise HTTPException(status_code=400, detail="Cannot raise request with 0 quantity. Product may already be in stock.")
+
+    print(f"[DEBUG] Quantity to increment: {qty}")
 
     # Build a deterministic matcher (add category if present in your data)
     matcher = {
@@ -147,10 +249,14 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
     }
     if request_data.get("category"):
         matcher["category"] = request_data["category"]
+    
+    # print(f"[DEBUG] Matcher: {matcher}")
 
-    # Prepare $setOnInsert with all fields from request_data except 'quantity'
+    # Prepare $setOnInsert with all fields from request_data except 'quantity' and fields in $set
     insert_snapshot = dict(request_data)  # shallow copy
     insert_snapshot.pop("quantity", None)  # quantity will be handled by $inc only
+    insert_snapshot.pop("estimate_date", None)  # estimate_date will be handled by $set
+    insert_snapshot.pop("requested_by", None)  # requested_by will be handled by $set
     insert_snapshot.update({
         "request_id": await generate_request_id(),
         "order_id": order_id,

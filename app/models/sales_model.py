@@ -24,7 +24,11 @@ class Product(BaseModel):
     
 class OrderProductInput(BaseModel):
     product_id: str
-    quantity: int    
+    product_name: Optional[str] = None  # For preorders when product_id is empty
+    quantity: int
+    category: Optional[str] = None  # Optional category
+    unit: Optional[str] = "pcs"  # Optional unit, defaults to pcs
+    consumer_return_conditions: Optional[List[str]] = []    
 
 class EditOrderProductInput(BaseModel):
     product_id: str
@@ -44,6 +48,7 @@ class SalesOrderModel(BaseModel):
     store_id: Optional[str] = None
     order_id: Optional[str] = None
     customer_id: Optional[str] = None
+    type: Optional[str] = "order"  # order | preorder
     customer_name: str
     customer_phone: str           # ✅ New field
     customer_email: EmailStr      # ✅ New field (validates email)

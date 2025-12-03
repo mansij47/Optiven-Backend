@@ -83,7 +83,7 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
                     "quantity": new_quantity,
                     "estimate_date": estimate_date,
                     "requested_by": requester,
-                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                    "updated_at": datetime.utcnow()  # store as real datetime
                 }
             }
         )
@@ -92,7 +92,7 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
         # Create new request
         request_id = await generate_request_id()
         request_data["request_id"] = request_id
-        request_data["created_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        request_data["created_at"] = datetime.utcnow()  # real datetime
         
         await db.RequestedOrders.insert_one(request_data)
         return request_id
@@ -127,9 +127,9 @@ async def raise_order_request_service(data: dict, org_id: str, store_id: str, re
                     "unit": data.get("unit", "pcs"),
                     "category": data.get("category", "general"),
                     "sub_category": data.get("sub_category", ""),
-                    "estimate_date": data.get("estimate_date", datetime.utcnow().strftime("%Y-%m-%d")),
+                    "estimate_date": data.get("estimate_date", datetime.utcnow().strftime("%Y-%m-%d")),  # keep date-only string
                     "requested_by": requested_by,
-                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                    "updated_at": datetime.utcnow()  # real datetime
                 }
             }
         )
@@ -149,7 +149,7 @@ async def raise_order_request_service(data: dict, org_id: str, store_id: str, re
             "sub_category": data.get("sub_category", ""),
             "estimate_date": data.get("estimate_date", datetime.utcnow().strftime("%Y-%m-%d")),
             "requested_by": requested_by,
-            "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            "created_at": datetime.utcnow()  # real datetime
         }
         await db.RequestedOrders.insert_one(request_doc)
         return {"message": "Request raised successfully", "request_id": request_id}

@@ -211,10 +211,65 @@ async def raise_request_order(request_model: RequestOrderModel, request: Request
         org_id=org_id,
         store_id=store_id,
         requester=requester
-        
     )
 
-    return {"message": "Request raised successfully", "request_id": request_id}
+    # ✅ Check if the order is a preorder to send priority notification
+    try:
+        from app.db import db
+        order = await db.SalesOrders.find_one({"order_id": request_model.order_id, "store_id": store_id})
+        is_preorder = order and order.get("type") == "preorder"
+        
+        
+        
+        # ✅ Send notification to procurement
+        from app.models.notification_model import UserInfo, NotificationBase
+        from app.services.notification_service import create_notification
+        
+        if is_preorder:
+            notification_title = " PRIORITY: Preorder Request from Sales"
+            notification_message = f"Sales has raised a PREORDER request (Request ID: {request_id})."
+            notification_type = "Preorder Request"
+        else:
+            notification_title = "New Procurement Request from Sales"
+            notification_message = f"Sales has raised a new procurement request (Request ID: {request_id})."
+            notification_type = "Order Request"
+        
+       
+        
+        notification = NotificationBase(
+            sender=UserInfo(
+                role=requester["role"],
+                id=requester["id"],
+                store_id=store_id  # Include store_id in sender info
+            ),
+            type_of_notification=notification_type,
+            title=notification_title,
+            message=notification_message,
+        )
+
+        notification_response = await create_notification(
+            notification=notification,
+            procurement=True  # Send only to procurement
+        )
+        
+       
+
+        return {
+            "message": "Request raised successfully",
+            "request_id": request_id,
+            "notification": notification_response
+        }
+    except Exception as e:
+        print(f"[ERROR] Failed to send notification: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        # Still return success for the request, even if notification fails
+        return {
+            "message": "Request raised successfully",
+            "request_id": request_id,
+            "notification": {"error": str(e)}
+        }
 
 #return added successfully notification
 @router.post("/orders/returns/add", tags=["Sales"]) 
