@@ -93,6 +93,7 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
         request_id = await generate_request_id()
         request_data["request_id"] = request_id
         request_data["created_at"] = datetime.utcnow()  # real datetime
+        request_data["updated_at"] = datetime.utcnow()  # real datetime
         
         await db.RequestedOrders.insert_one(request_data)
         return request_id
