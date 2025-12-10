@@ -181,6 +181,7 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
         product_dict["created_at"] = datetime.utcnow()
         product_dict["updated_at"] = datetime.utcnow()
         product_dict["status"] = "Stock-in" if quantity > 1 else "Stock-out"
+        product_dict["type"] = "order"  # ✅ Default to 'order' for manually added inventory
         product_dict["average_price"] = 0.0  # Will be updated after items are created
 
         # Insert product

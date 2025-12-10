@@ -43,6 +43,7 @@ class RequestedOrder(BaseModel):
     store_id: str
     org_id: str
     status: Optional[str] = "pending"
+    type: Optional[str] = "order"  # "order" or "preorder"
     created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
 
 
@@ -51,6 +52,7 @@ class RequestedOrderUpdate(BaseModel):
     quantity: Optional[int]
     unit: Optional[str]
     status: Optional[str]
+    type: Optional[str]  # "order" or "preorder"
 
 #Add Contracts
 class Contract(BaseModel):
@@ -78,6 +80,7 @@ class Contract(BaseModel):
     returnable: Optional[bool] = None
     return_conditions: Optional[List[str]] = None
     is_damage_returnable: Optional[bool] = None
+    type: Optional[str] = "order"  # "order" or "preorder"
     status: str
 
 #Update Contracts
@@ -93,6 +96,7 @@ class ContractUpdate(BaseModel):
     unit_price: Optional[float]= None
     gst_number: Optional[str]= None
     tax: Optional[float]= None
+    type: Optional[str]= None  # "order" or "preorder"
     product_name: Optional[str]= None
     quantity: Optional[int]= None
     unit: Optional[str]= None
@@ -377,3 +381,4 @@ class PurchaseOrderSubmitRequest(BaseModel):
     is_consumer_returnable: bool
     consumer_return_conditions: Optional[List[str]] = []
     items: Optional[List[ItemDetail]] = []  # ✅ Items edited by user
+    type: Optional[str] = "order"  # "order" or "preorder" - defaults to "order" when validated

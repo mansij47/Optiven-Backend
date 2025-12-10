@@ -143,6 +143,9 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
     category = product["category"]
     unit = "pcs"  # Hardcoded, adjust if needed
     order_quantity = product.get("order_quantity", 0)
+    
+    # ✅ Get order type from sales order (preorder or order)
+    order_type = order.get("type", "order")  # Default to "order" if not specified
 
     # print(f"[DEBUG] Preparing request for product: {product_name}, order_quantity: {order_quantity}")
 
@@ -187,7 +190,8 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
         "unit": unit,
         "category": category,
         "estimate_date": estimate_date,
-        "requested_by": requester
+        "requested_by": requester,
+        "type": order_type  # ✅ Propagate order type
     }
 
 # async def raise_request_order_service(order_id: str, estimate_date: str, org_id: str, store_id: str, requester: dict):

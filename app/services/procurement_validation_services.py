@@ -7,48 +7,78 @@ import uuid
 from datetime import datetime
 
 
-async def update_sales_orders_on_inventory_change(product_name: str, product_id: str, store_id: str):
+async def update_sales_orders_on_inventory_change(product_name: str, product_id: str, store_id: str, unit_price: float, tax: float):
     """
     Update sales orders when inventory is added/updated:
     - Populate product_id (was empty for preorders)
     - Change type from 'preorder' to 'order'
     - Change status from 'Preorder' to 'Stock-in'
+    - Update unit_price and tax with actual values passed from inventory
+    - Recalculate total_order_price
     Match by product_name (case-insensitive) since preorders have empty product_id
     """
+    # Use the unit_price and tax passed directly (from ProductItems or PurchaseOrder)
+    inventory_unit_price = float(unit_price)
+    inventory_tax = float(tax)
+    
     # Find all preorder sales orders with this product (case-insensitive match)
+    # Also check for orders with unit_price = 0 and tax = 0 (preorder indicators)
     preorder_orders = db.SalesOrders.find({
         "store_id": store_id,
         "type": "preorder",
-        "products.product_name": {"$regex": f"^{product_name}$", "$options": "i"}
+        "products": {
+            "$elemMatch": {
+                "product_name": {"$regex": f"^{product_name}$", "$options": "i"},
+                "unit_price": 0,
+                "tax": 0
+            }
+        }
     })
     
     async for order in preorder_orders:
-        # Update the order type and status
+        # Update product details for matching products in the order
+        updated_products = []
+        new_total_price = 0.0
+        
+        for product in order.get("products", []):
+            if product.get("product_name", "").lower() == product_name.lower():
+                # ✅ Update all fields for the matching product
+                product["product_id"] = product_id  # Populate the product_id from inventory
+                product["product_status"] = "Stock-in"
+                product["unit_price"] = inventory_unit_price  # ✅ Update with real unit price
+                product["tax"] = inventory_tax  # ✅ Update with real tax
+                
+                # ✅ Calculate this product's contribution to total
+                order_quantity = int(product.get("order_quantity", 0))
+                line_total = (inventory_unit_price * order_quantity)
+                tax_amount = (inventory_tax * order_quantity)
+                new_total_price += (line_total + tax_amount)
+            else:
+                # For other products, calculate their contribution to total
+                order_quantity = int(product.get("order_quantity", 0))
+                unit_price = float(product.get("unit_price", 0))
+                tax = float(product.get("tax", 0))
+                line_total = (unit_price * order_quantity)
+                tax_amount = (tax * order_quantity)
+                new_total_price += (line_total + tax_amount)
+            
+            updated_products.append(product)
+        
+        # ✅ Update the order with all changes including recalculated total
         await db.SalesOrders.update_one(
             {"_id": order["_id"]},
             {
                 "$set": {
                     "type": "order",
                     "status": "Stock-in",
+                    "products": updated_products,
+                    "total_order_price": round(new_total_price, 2),  # ✅ Update total price
                     "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
                 }
             }
         )
-        
-        # Update product_id and product_status for matching products in the order
-        updated_products = []
-        for product in order.get("products", []):
-            if product.get("product_name", "").lower() == product_name.lower():
-                product["product_id"] = product_id  # Populate the product_id from inventory
-                product["product_status"] = "Stock-in"
-            updated_products.append(product)
-        
-        await db.SalesOrders.update_one(
-            {"_id": order["_id"]},
-            {"$set": {"products": updated_products}}
-        )
     
-    print(f"[INFO] Updated preorder sales orders for product: {product_name}, assigned product_id: {product_id}")
+    print(f"[INFO] Updated preorder sales orders for product: {product_name}, assigned product_id: {product_id}, unit_price: {inventory_unit_price}, tax: {inventory_tax}")
 
 
 async def validate_purchase_order_preview(
@@ -207,13 +237,13 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                         "quantity": new_quantity,
                         "min_stock": data.min_quantity or existing_product.get("min_stock", 4),
                         "status": "Stock-in",
+                        "type": "order",  # ✅ Set to 'order' when validated and added to inventory
                         "updated_at": datetime.utcnow()
                     }
                 }
             )
             
-            # ✅ Update any preorder sales orders for this product
-            await update_sales_orders_on_inventory_change(base_order.get("product_name"), existing_product["product_id"], store_id)
+            # Will update preorder sales orders after ProductItems are created
         else:
             # Product doesn't exist - CREATE new one
             product_id = await _next_id(db.Inventory, "product_id", "PROD", store_id)
@@ -233,6 +263,7 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 "tax": float(base_order.get("tax", 0)),
                 "min_stock": data.min_quantity or 4,
                 "status": "Stock-in",
+                "type": "order",  # ✅ Set to 'order' when validated and added to inventory
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow()
             }
@@ -240,8 +271,7 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             # Insert product into Inventory
             await db.Inventory.insert_one(product_dict)
             
-            # ✅ Update any preorder sales orders for this product
-            await update_sales_orders_on_inventory_change(base_order.get("product_name"), product_id, store_id)
+            # Will update preorder sales orders after ProductItems are created
         
         # ✅ Create individual ProductItems with user-edited details from frontend
         items_created = []
@@ -506,6 +536,15 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
         await db.Inventory.update_one(
             {"product_id": product_id, "store_id": store_id},
             {"$set": {"average_price": average_price, "updated_at": datetime.utcnow()}}
+        )
+        
+        # ✅ NOW Update preorder sales orders with actual unit_price and tax from base_order
+        await update_sales_orders_on_inventory_change(
+            base_order.get("product_name"), 
+            product_id, 
+            store_id,
+            float(base_order.get("unit_price", 0)),
+            float(base_order.get("tax", 0))
         )
         
         # Get updated product quantity

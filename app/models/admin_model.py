@@ -41,6 +41,7 @@ class Product(BaseModel):
     updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
     created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
     status: Optional[str] = None
+    type: Optional[str] = "order"  # "order" or "preorder" - defaults to "order" for regular inventory
     tax: Optional[float] = 0.0 # tax according to country wise 
    
     class ProductUpdateModel(BaseModel):
@@ -58,6 +59,7 @@ class Product(BaseModel):
      updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
      created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
      status: Optional[str] = None
+     type: Optional[str] = None  # "order" or "preorder"
      tax: Optional[float] = 0.0
 
 class ProductItem(BaseModel):
