@@ -263,11 +263,12 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
     insert_snapshot.pop("quantity", None)  # quantity will be handled by $inc only
     insert_snapshot.pop("estimate_date", None)  # estimate_date will be handled by $set
     insert_snapshot.pop("requested_by", None)  # requested_by will be handled by $set
+    insert_snapshot.pop("updated_at", None)  # updated_at will be handled by $set
+    insert_snapshot.pop("created_at", None)  # created_at will be set fresh below
     insert_snapshot.update({
         "request_id": await generate_request_id(),
         "order_id": order_id,
-        "created_at": datetime.utcnow(), 
-        "updated_at": datetime.utcnow(),
+        "created_at": datetime.utcnow(),
     })
 
     # One atomic upsert handles both paths:

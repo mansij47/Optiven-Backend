@@ -383,6 +383,7 @@ class ItemDetail(BaseModel):
     serial_no: Optional[str] = None
     batch_number: Optional[str] = None
     unit_price: str = "0"
+    selling_price: Optional[str] = None  # Default will be unit_price + 50
     # ✅ NEW: Item-level validation fields
     is_consumer_returnable: Optional[bool] = None
     consumer_return_conditions: Optional[List[str]] = []

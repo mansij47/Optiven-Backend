@@ -11,13 +11,13 @@ from jose import jwt, JWTError
 from bson import ObjectId
 import os
 from app.models.notification_model import UserInfo, NotificationBase
-from app.models.admin_model import DepartmentUserCreate, DepartmentUserUpdate, EditOrderModel, LoginModel, NewRaiseOrderRequest, Product, RaiseRequestOrderModel, ResetPasswordRequest, SalesOrderModel
+from app.models.admin_model import DepartmentUserCreate, DepartmentUserUpdate, EditOrderModel, LoginModel, NewRaiseOrderRequest, Product, RaiseRequestOrderModel, ResetPasswordRequest, SalesOrderModel, ProfitOrder
 from app.services import notification_service
 from app.utils.old_product import get_old_products, delete_old_products
 from app.services import admin_lossOrders_service
+from app.services import admin_profitOrders_service
 from app.services.admin_inventory_service import delete_product_service, update_product_by_id, export_inventory_csv, get_product_by_id, get_all_products, add_product_service, get_item_by_id, update_item_by_id 
-# from app.services.admin_lossOrders_service import export_loss_orders_csv, get_all_loss_orders_with_metrics 
-from app.services.admin_lossOrders_service import  get_loss_data_by_user
+from app.services.admin_lossOrders_service import  get_loss_data_by_user, export_loss_orders_csv
 from app.services.admin_receivedOrders_service import delete_order_by_id, get_all_sales_orders, update_sales_order
 from app.services.admin_requested_order_service import get_all_requested_orders, raise_order_request_service, raise_request_order_service
 from app.services.admin_soldOrders_service import add_sales_order, get_all_sold_orders
@@ -63,6 +63,10 @@ router = APIRouter()
 def root():
     return {"message": "Welcome to Optiven Admin APIs"}
 
+@router.get("/test")
+def test():
+    return {"message": "Test route working"}
+
 # ================== Dashboard ==================
 @router.get("/dashboard")
 async def fetch_dashboard_data(request: Request):
@@ -88,6 +92,17 @@ async def get_loss_dashboard_data(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     return await get_loss_data_by_user(user["id"])
+
+#profit data api
+@router.get("/report/profitOrders")
+async def get_profit_dashboard_data(request: Request):
+    user = request.state.user  # ✅ Already set by your middleware
+
+    if not user or "id" not in user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    return await admin_profitOrders_service.get_profit_data_by_user(user["id"])
+
 # ================== NOTIFICATIONS ==================
 @router.post("/notification")
 async def send_notification(
@@ -713,6 +728,120 @@ async def get_loss_orders(request: Request):
     store_id = user["store_id"]
 
     return await admin_lossOrders_service.get_loss_orders_by_store(store_id)
+
+# ================== PROFIT ORDERS CRUD ==================
+
+#List of profit orders 
+@router.get("/profit-orders")
+async def get_profit_orders(request: Request):
+    user = request.state.user
+
+    if not user or "store_id" not in user:
+        raise HTTPException(status_code=401, detail="Unauthorized: store_id missing")
+
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+
+    store_id = user["store_id"]
+
+    return await admin_profitOrders_service.get_profit_orders_by_store(store_id)
+
+#Get single profit order by ID
+@router.get("/profit-orders/{order_id}")
+async def get_profit_order_detail(order_id: str, request: Request):
+    user = request.state.user
+
+    if not user or "store_id" not in user:
+        raise HTTPException(status_code=401, detail="Unauthorized: store_id missing")
+
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+
+    store_id = user["store_id"]
+
+    return await admin_profitOrders_service.get_profit_order_by_id(order_id, store_id)
+
+#View profit orders by product_id
+@router.get("/profit-orders/product/{product_id}")
+async def get_profit_orders_by_product(product_id: str, request: Request):
+    user = request.state.user
+
+    if not user or "store_id" not in user:
+        raise HTTPException(status_code=401, detail="Unauthorized: store_id missing")
+
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+
+    store_id = user["store_id"]
+
+    return await admin_profitOrders_service.get_profit_orders_by_product_id(product_id, store_id)
+
+#Create profit order
+@router.post("/profit-orders")
+async def create_profit_order(profit_order: ProfitOrder, request: Request):
+    user = request.state.user
+
+    if not user or "store_id" not in user or "org_id" not in user:
+        raise HTTPException(status_code=401, detail="Unauthorized: Missing user data")
+
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+
+    store_id = user["store_id"]
+    org_id = user["org_id"]
+
+    profit_order_data = profit_order.dict()
+
+    return await admin_profitOrders_service.create_profit_order(profit_order_data, store_id, org_id)
+
+#Update profit order
+@router.put("/profit-orders/{order_id}")
+async def update_profit_order(order_id: str, update_data: dict, request: Request):
+    user = request.state.user
+
+    if not user or "store_id" not in user:
+        raise HTTPException(status_code=401, detail="Unauthorized: store_id missing")
+
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+
+    store_id = user["store_id"]
+
+    return await admin_profitOrders_service.update_profit_order(order_id, update_data, store_id)
+
+#Delete profit order
+@router.delete("/profit-orders/{order_id}")
+async def delete_profit_order(order_id: str, request: Request):
+    user = request.state.user
+
+    if not user or "store_id" not in user:
+        raise HTTPException(status_code=401, detail="Unauthorized: store_id missing")
+
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+
+    store_id = user["store_id"]
+
+    return await admin_profitOrders_service.delete_profit_order(order_id, store_id)
+
+#Export profit sheet csv file
+@router.get("/export_profitSheet", summary="Export Profit Orders as CSV")
+async def export_profit_orders(request: Request):
+    try:
+        user = request.state.user
+        store_id = user.get("store_id")
+        org_id = user.get("org_id")
+
+        if not store_id or not org_id:
+            raise HTTPException(status_code=400, detail="Missing store_id or org_id in token")
+
+        return await admin_profitOrders_service.export_profit_orders_csv(store_id, org_id)
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ================== END PROFIT ORDERS ==================
+
 
 @router.get("/get-old-products")
 async def fetch_old_products(store_id: str, month: int = None, older_than_months: int = None):

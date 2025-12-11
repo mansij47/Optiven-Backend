@@ -401,6 +401,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
         
         # ✅ Create individual ProductItems for each quantity
         items_created = []
+        
         for i in range(return_quantity):
             item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
             
@@ -411,6 +412,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
                 "product_id": product_id,
                 "item_name": product_name,
                 "unit_price": unit_price,
+                "selling_price": None,  # Will be set when item is sold
                 "vendor_id": vendor_id,
                 "vendor_name": vendor_name,
                 "serial_no": None,

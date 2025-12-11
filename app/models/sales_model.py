@@ -30,6 +30,7 @@ class OrderProductInput(BaseModel):
     quantity: int
     category: Optional[str] = None  # Optional category
     unit: Optional[str] = "pcs"  # Optional unit, defaults to pcs
+    selling_price: Optional[str] = None  # Selling price per unit
     consumer_return_conditions: Optional[List[str]] = [] 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)   
@@ -170,6 +171,7 @@ class SalesProductItem(BaseModel):
     product_name: Optional[str] = None
     quantity: str
     price: float
+    selling_price: Optional[float] = None  # Selling price used for profit calculation
     item_ids: Optional[List[str]] = None  # Array of item IDs (handles single or multiple)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

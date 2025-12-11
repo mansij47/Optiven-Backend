@@ -284,12 +284,14 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
         
         # If no items provided from frontend, create default items
         if not items_to_create:
+            base_unit_price = str(base_order.get("unit_price", "0"))
+            
             items_to_create = [
                 {
                     "item_name": f"{base_order.get('product_name')}",
                     "serial_no": None,
                     "batch_number": None,
-                    "unit_price": str(base_order.get("unit_price", "0")),
+                    "unit_price": base_unit_price,
                     "is_damaged": False
                 }
                 for i in range(data.received_quantity)
@@ -329,13 +331,24 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 item_is_seller_returnable = getattr(item_detail, "is_seller_returnable", base_order.get("returnable", False))
                 item_seller_return_conditions = getattr(item_detail, "seller_return_conditions", base_order.get("return_conditions", []))
             
+            # Get unit_price for the item
+            unit_price_value = item_detail.get("unit_price") if isinstance(item_detail, dict) else item_detail.unit_price
+            
+            # ✅ Calculate selling_price at item level: unit_price + 50
+            try:
+                unit_price_float = float(unit_price_value) if unit_price_value else 0.0
+                item_selling_price = round(unit_price_float + 50, 2)
+            except (ValueError, TypeError):
+                item_selling_price = 50.0  # Default if conversion fails
+            
             item_data = {
                 "org_id": org_id,
                 "store_id": store_id,
                 "item_id": item_id,
                 "product_id": product_id,
                 "item_name": item_detail.get("item_name") if isinstance(item_detail, dict) else item_detail.item_name,
-                "unit_price": item_detail.get("unit_price") if isinstance(item_detail, dict) else item_detail.unit_price,
+                "unit_price": unit_price_value,
+                "selling_price": item_selling_price,  # Set at item level: unit_price + 50
                 "vendor_id": base_order.get("vendor_id"),
                 "vendor_name": base_order.get("vendor_name"),
                 "serial_no": item_detail.get("serial_no") if isinstance(item_detail, dict) else item_detail.serial_no,
@@ -392,6 +405,7 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                     "product_id": product_id,
                     "item_name": item_name,
                     "unit_price": unit_price,
+                    "selling_price": None,  # Damaged items don't have selling price
                     "vendor_id": base_order.get("vendor_id"),
                     "vendor_name": base_order.get("vendor_name"),
                     "contract_id": base_order.get("contract_id"),
@@ -466,6 +480,7 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                     "product_id": product_id,
                     "item_name": item_name,
                     "unit_price": unit_price,
+                    "selling_price": None,  # Return items don't have selling price
                     "vendor_id": base_order.get("vendor_id"),
                     "vendor_name": base_order.get("vendor_name"),
                     "contract_id": base_order.get("contract_id"),
@@ -530,12 +545,16 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             }
             await db["ReturnToVendor"].insert_one(return_doc)
         
-        # ✅ Calculate and update average_price after items are created
-        from app.services.admin_inventory_service import calculate_average_price
+        # ✅ Calculate and update average_price and average_selling_price at product level
+        from app.services.admin_inventory_service import calculate_average_price, calculate_average_selling_price
         average_price = await calculate_average_price(product_id, store_id)
+        
+        # ✅ Calculate average_selling_price from all items' selling_price
+        average_selling_price = await calculate_average_selling_price(product_id, store_id)
+        
         await db.Inventory.update_one(
             {"product_id": product_id, "store_id": store_id},
-            {"$set": {"average_price": average_price, "updated_at": datetime.utcnow()}}
+            {"$set": {"average_price": average_price, "average_selling_price": average_selling_price, "updated_at": datetime.utcnow()}}
         )
         
         # ✅ NOW Update preorder sales orders with actual unit_price and tax from base_order
@@ -593,6 +612,8 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
         
         # Create ProductItems for each damaged item
         damaged_loss_item_ids = []
+        base_unit_price = str(base_order.get("unit_price", "0"))
+        
         for i in range(data.received_quantity):
             loss_item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
             
@@ -603,7 +624,8 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 "item_id": loss_item_id,
                 "product_id": product_id,
                 "item_name": base_order.get("product_name"),
-                "unit_price": str(base_order.get("unit_price", "0")),
+                "unit_price": base_unit_price,
+                "selling_price": None,  # Damaged items don't have selling price
                 "vendor_id": base_order.get("vendor_id"),
                 "vendor_name": base_order.get("vendor_name"),
                 "contract_id": base_order.get("contract_id"),
@@ -689,6 +711,7 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 "product_id": product_id,
                 "item_name": base_order.get("product_name"),
                 "unit_price": unit_price,
+                "selling_price": None,  # Return items don't have selling price
                 "vendor_id": base_order.get("vendor_id"),
                 "vendor_name": base_order.get("vendor_name"),
                 "contract_id": base_order.get("contract_id"),

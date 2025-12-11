@@ -12,6 +12,7 @@ class Product(BaseModel):
     unit: Optional[str] = None
     quantity: Optional[int] = None
     average_price: Optional[float] = 0.0  # Calculated from all items' unit_price
+    average_selling_price: Optional[float] = 0.0  # Calculated from all items' selling_price
     
     min_stock: Optional[int] = 5  # Minimum stock level to trigger restock notification
     category: Optional[str] = None
@@ -31,6 +32,7 @@ class Product(BaseModel):
      unit: Optional[str] = None
      quantity: Optional[int] = None
      average_price: Optional[float] = 0.0  # Calculated from all items' unit_price
+     average_selling_price: Optional[float] = 0.0 
      min_stock: Optional[int] = 5  # Minimum stock level to trigger restock notification
      category: Optional[str] = None
      sub_category: Optional[str] = None
@@ -48,6 +50,7 @@ class ProductItem(BaseModel):
     product_id: Optional[str] = None  # Maps to parent product (e.g., iPhone product)
     item_name: Optional[str] = None
     unit_price: Optional[str] = "0"
+    selling_price: Optional[str] = None  # Default: unit_price + 50
     vendor_id: Optional[str] = None  # Link to vendor
     vendor_name: Optional[str] = None 
     serial_no: Optional[str] = None
@@ -62,6 +65,7 @@ class ProductItemUpdateModel(BaseModel):
      product_id: Optional[str] = None
      item_name: Optional[str] = None
      unit_price: Optional[str] = None
+     selling_price: Optional[str] = None  # Can be updated
      vendor_id: Optional[str] = None
      vendor_name: Optional[str] = None
      serial_no: Optional[str] = None
@@ -93,6 +97,20 @@ class LossOrder(BaseModel):
     unit: str
     unit_price: float
     reason: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+#Profit Orders
+class ProfitOrder(BaseModel):
+    product_name: str
+    category: str
+    date_recorded: str
+    quantity_sold: int
+    unit: str
+    unit_price: float  # Cost price
+    selling_price: float  # Selling price
+    profit_amount: Optional[float] = None  # Auto-calculated: (selling_price - unit_price) * quantity_sold
+    order_id: Optional[str] = None  # Reference to sales order
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
