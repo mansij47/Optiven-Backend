@@ -1,0 +1,6 @@
+# PDF Invoice Extraction Dependencies
+# Add these to your requirements.txt
+
+pdfplumber>=0.9.0
+google-generativeai>=0.3.0
+python-dotenv>=1.0.0
