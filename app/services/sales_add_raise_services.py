@@ -143,6 +143,9 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
     category = product["category"]
     unit = "pcs"  # Hardcoded, adjust if needed
     order_quantity = product.get("order_quantity", 0)
+    
+    # ✅ Get order type from sales order (preorder or order)
+    order_type = order.get("type", "order")  # Default to "order" if not specified
 
     # print(f"[DEBUG] Preparing request for product: {product_name}, order_quantity: {order_quantity}")
 
@@ -187,7 +190,10 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
         "unit": unit,
         "category": category,
         "estimate_date": estimate_date,
-        "requested_by": requester
+        "requested_by": requester,
+        "type": order_type,  # ✅ Propagate order type
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
     }
 
 # async def raise_request_order_service(order_id: str, estimate_date: str, org_id: str, store_id: str, requester: dict):
@@ -257,10 +263,12 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
     insert_snapshot.pop("quantity", None)  # quantity will be handled by $inc only
     insert_snapshot.pop("estimate_date", None)  # estimate_date will be handled by $set
     insert_snapshot.pop("requested_by", None)  # requested_by will be handled by $set
+    insert_snapshot.pop("updated_at", None)  # updated_at will be handled by $set
+    insert_snapshot.pop("created_at", None)  # created_at will be set fresh below
     insert_snapshot.update({
         "request_id": await generate_request_id(),
         "order_id": order_id,
-        "created_at": datetime.utcnow(),   # store real datetimes; format only at read time
+        "created_at": datetime.utcnow(),
     })
 
     # One atomic upsert handles both paths:

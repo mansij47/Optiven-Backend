@@ -21,6 +21,8 @@ class Product(BaseModel):
     warranty_tenure: int
     warranty_unit: str
     last_updated: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
     
 class OrderProductInput(BaseModel):
     product_id: str
@@ -28,11 +30,15 @@ class OrderProductInput(BaseModel):
     quantity: int
     category: Optional[str] = None  # Optional category
     unit: Optional[str] = "pcs"  # Optional unit, defaults to pcs
-    consumer_return_conditions: Optional[List[str]] = []    
+    selling_price: Optional[str] = None  # Selling price per unit
+    consumer_return_conditions: Optional[List[str]] = [] 
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)   
 
 class EditOrderProductInput(BaseModel):
     product_id: str
     quantity: int
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class EditOrderModel(BaseModel):
     customer_name: Optional[str]
@@ -43,6 +49,8 @@ class EditOrderModel(BaseModel):
     delivery_date: Optional[datetime]
     gst_number: Optional[str]
     products: Optional[List[EditOrderProductInput]]
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class SalesOrderModel(BaseModel):
     store_id: Optional[str] = None
@@ -59,6 +67,8 @@ class SalesOrderModel(BaseModel):
     products: List[OrderProductInput]
     total_order_price: Optional[float] = None
     order_status: Optional[str] = "0"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class LoginModel(BaseModel):
     email: EmailStr
@@ -84,6 +94,8 @@ class ReturnOrder(BaseModel):
     reason: str
     sent_to_procurement: Optional[int] = Field(default=0, ge=0, le=1)
     store_id: Optional[str] = None  # Include this for injection
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class SendToProcurement(BaseModel):
     return_id: str
@@ -101,13 +113,16 @@ class SendToProcurement(BaseModel):
     unit_price:int
     tax: float
     return_amount:str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class ReturnOrderRequest(BaseModel):
     order_id: str
     reason: str
     remarks: Optional[str] = None
     return_quantity: int
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ReturnedProductModel(BaseModel):
@@ -120,7 +135,8 @@ class ReturnedProductModel(BaseModel):
     consumer_return_conditions: Optional[List[str]] = []
     is_seller_returnable: Optional[bool] = None
     seller_return_conditions: Optional[List[str]] = []
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 class ReturnedOrderModel(BaseModel):
     return_id: str
     order_id: str
@@ -136,7 +152,8 @@ class ReturnedOrderModel(BaseModel):
     returned_amount: Optional[float] = None
     sent_to_procurement: Optional[int] = None
     store_id: str
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 class ProductDetails(BaseModel):
     product_id: str
     product_name: Optional[str]
@@ -147,20 +164,24 @@ class ProductDetails(BaseModel):
     store_id: Optional[str]  
     tax: Optional[float]  
     consumer_return_conditions: Optional[List[str]]
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 class SalesProductItem(BaseModel):
     product_id: str
     product_name: Optional[str] = None
     quantity: str
     price: float
+    selling_price: Optional[float] = None  # Selling price used for profit calculation
     item_ids: Optional[List[str]] = None  # Array of item IDs (handles single or multiple)
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 class SalesOrderDetails(BaseModel):
     order_id: str
     customer_name: str
     customer_id: str
     store_id: str
     order_status: str
-    created_at: Optional[str] = None
+    # created_at: Optional[str] = None
     products: List[SalesProductItem]
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

@@ -185,6 +185,7 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
                 "is_damage_returnable": contract.get("is_damage_returnable"),
                 "warranty_tenure": contract.get("warranty_tenure"),
                 "warranty_unit": contract.get("warranty_unit"),
+                "type": contract.get("type", "order"),  # ✅ Propagate type from contract
 
             }
             await purchase_orders_collection.insert_one(purchase_order)

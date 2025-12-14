@@ -180,3 +180,50 @@ async def get_loss_orders_by_product_id(product_id: str, user_id: str):
         raise HTTPException(status_code=404, detail="No loss orders found for this product in your store.")
 
     return loss_orders
+
+
+# 🔹 Export Loss Orders as CSV
+async def export_loss_orders_csv(store_id: str, org_id: str):
+    from fastapi.responses import StreamingResponse
+    import io
+    import csv
+
+    cursor = db.LossOrders.find({"store_id": store_id, "org_id": org_id})
+    loss_orders = []
+
+    async for order in cursor:
+        quantity = order.get("quantity_lost", 0)
+        price = order.get("unit_price", 0.0)
+
+        try:
+            loss = float(quantity) * float(price)
+        except (ValueError, TypeError):
+            loss = 0.0
+
+        loss_orders.append({
+            "Product Name": order.get("product_name", ""),
+            "Category": order.get("category", ""),
+            "Date Reported": order.get("date_reported", ""),
+            "Quantity Lost": quantity,
+            "Unit": order.get("unit", ""),
+            "Unit Price": price,
+            "Loss Amount": round(loss, 2),
+            "Reason": order.get("reason", ""),
+        })
+
+    if not loss_orders:
+        raise HTTPException(status_code=404, detail="No loss orders found for export")
+
+    # Create CSV
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=loss_orders[0].keys())
+    writer.writeheader()
+    writer.writerows(loss_orders)
+
+    output.seek(0)
+
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=loss_orders_{store_id}.csv"}
+    )

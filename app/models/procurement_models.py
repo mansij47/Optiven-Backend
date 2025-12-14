@@ -43,7 +43,9 @@ class RequestedOrder(BaseModel):
     store_id: str
     org_id: str
     status: Optional[str] = "pending"
-    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    type: Optional[str] = "order"  # "order" or "preorder"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class RequestedOrderUpdate(BaseModel):
@@ -51,7 +53,10 @@ class RequestedOrderUpdate(BaseModel):
     quantity: Optional[int]
     unit: Optional[str]
     status: Optional[str]
-
+    type: Optional[str]  # "order" or "preorder"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
 #Add Contracts
 class Contract(BaseModel):
     contract_id: Optional[str] = None
@@ -78,8 +83,11 @@ class Contract(BaseModel):
     returnable: Optional[bool] = None
     return_conditions: Optional[List[str]] = None
     is_damage_returnable: Optional[bool] = None
+    type: Optional[str] = "order"  # "order" or "preorder"
     status: str
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
 #Update Contracts
 class ContractUpdate(BaseModel):
     contract_id: str= None
@@ -93,6 +101,7 @@ class ContractUpdate(BaseModel):
     unit_price: Optional[float]= None
     gst_number: Optional[str]= None
     tax: Optional[float]= None
+    type: Optional[str]= None  # "order" or "preorder"
     product_name: Optional[str]= None
     quantity: Optional[int]= None
     unit: Optional[str]= None
@@ -107,13 +116,15 @@ class ContractUpdate(BaseModel):
     is_damage_returnable: Optional[bool] = None
 
     status: Optional[str]= None
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 #Contract Status 
 class ContractStatusUpdate(BaseModel):
     action: Literal["accept", "decline", "revoke"]
     contract_id: str
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 #ReturnToVendor
 class ReturnToVendorModel(BaseModel):
@@ -135,7 +146,9 @@ class ReturnToVendorModel(BaseModel):
     return_reason: str
     store_id: Optional[str] = None
     org_id: Optional[str] = None
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
 class ReturnToVendorResponse(BaseModel):
     return_id: str
     order_id: str
@@ -144,7 +157,8 @@ class ReturnToVendorResponse(BaseModel):
     delivery_date: Optional[str] = ""
     status: str
     return_amount: Optional[str] = "0"
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 class ReturnToVendorDetail(BaseModel):
     contract_id: str
     return_id: str
@@ -155,7 +169,8 @@ class ReturnToVendorDetail(BaseModel):
     product_condition: str      
     returnable_condition: Optional[str] = None  # Whether damaged is returnable
     return_reason: Optional[str] = None  # Reason    
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 #Purchase Orders
 class PurchaseOrderResponse(BaseModel):
@@ -172,7 +187,8 @@ class PurchaseOrderResponse(BaseModel):
     quantity: Optional[int] = None
     unit_price: Optional[float] = None
     return_conditions: Optional[List[str]] = None
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 #Purchase Orders (Detail Response)
 class PurchaseOrderDetailResponse(BaseModel):
     order_id: str
@@ -199,7 +215,8 @@ class PurchaseOrderDetailResponse(BaseModel):
     org_id: Optional[str] = None
     warranty_tenure: Optional[int] = None
     warranty_unit: Optional[str] = None
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 #Delivery Status
@@ -218,7 +235,8 @@ class ReturnOrderSummary(BaseModel):
     returned_amount: float
     status: str = "pending"
     action: str = "view"
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ProductDetails(BaseModel):
@@ -227,7 +245,8 @@ class ProductDetails(BaseModel):
     quantity: int
     unit_price: float
     tax: float
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class ReturnOrderDetail(BaseModel):
     return_id: str
@@ -243,12 +262,14 @@ class ReturnOrderDetail(BaseModel):
     reason: str
     returned_amount: Optional[float] = None
     store_id: str
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 #Return Validation
 class ReturnValidationRequest(BaseModel):
     return_id: str
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 #Loss Orders
 class LossOrder(BaseModel):
@@ -259,7 +280,8 @@ class LossOrder(BaseModel):
     unit: str
     unit_price: float
     reason: str
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 #Inventory
 # class Product(BaseModel):
@@ -292,8 +314,8 @@ class AdminSetupRequest(BaseModel):
     profile_image: Optional[str] = None
     bio: Optional[str] = None
     password: Optional[str] = None    
-
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 #Dashboard
 class MonthlyStats(BaseModel):
@@ -313,7 +335,8 @@ class ProcurementDashboardResponse(BaseModel):
     returns_initiated: int
     monthly_data: List[MonthlyStats]
     supplier_contracts: List[SupplierContract]
-    
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)    
 #purchase order validation and submission
 class TargetCollection(str, Enum):
     inventory = "Inventory"
@@ -344,7 +367,8 @@ class PurchaseOrderValidationRequest(BaseModel):
     tax: Optional[int] = 0
     product_id: Optional[str] = None
     selected_action: Optional[TargetCollection] = None   # ✅ new field
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class PurchaseOrderValidationInput(BaseModel):
     order_id: str
@@ -352,12 +376,14 @@ class PurchaseOrderValidationInput(BaseModel):
     received_quantity: int
     is_product_damaged: bool
     selected_action: Optional[str] = None
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 class ItemDetail(BaseModel):
     item_name: str
     serial_no: Optional[str] = None
     batch_number: Optional[str] = None
     unit_price: str = "0"
+    selling_price: Optional[str] = None  # Default will be unit_price + 50
     # ✅ NEW: Item-level validation fields
     is_consumer_returnable: Optional[bool] = None
     consumer_return_conditions: Optional[List[str]] = []
@@ -365,7 +391,8 @@ class ItemDetail(BaseModel):
     seller_return_conditions: Optional[List[str]] = []
     # ✅ NEW: Item damage status (for semi-damaged)
     is_damaged: Optional[bool] = False
-
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 class PurchaseOrderSubmitRequest(BaseModel):
     order_id: str
     expected_quantity: int
@@ -377,3 +404,6 @@ class PurchaseOrderSubmitRequest(BaseModel):
     is_consumer_returnable: bool
     consumer_return_conditions: Optional[List[str]] = []
     items: Optional[List[ItemDetail]] = []  # ✅ Items edited by user
+    type: Optional[str] = "order"  # "order" or "preorder" - defaults to "order" when validated    
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

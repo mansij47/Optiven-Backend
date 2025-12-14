@@ -53,6 +53,44 @@ async def calculate_average_price(product_id: str, store_id: str) -> float:
         return 0.0
 
 
+# ✅ Helper to calculate average selling price from all items of a product
+async def calculate_average_selling_price(product_id: str, store_id: str) -> float:
+    """
+    Calculate average selling price from all items belonging to a product.
+    Returns 0.0 if no items found or all items have 0 selling price.
+    """
+    try:
+        items_cursor = db.ProductItems.find(
+            {"product_id": product_id, "store_id": store_id},
+            {"selling_price": 1, "_id": 0}
+        )
+        
+        items = await items_cursor.to_list(length=None)
+        
+        if not items:
+            return 0.0
+        
+        # Convert selling_price to float and calculate average
+        prices = []
+        for item in items:
+            try:
+                price = float(item.get("selling_price", 0))
+                if price > 0:
+                    prices.append(price)
+            except (ValueError, TypeError):
+                continue
+        
+        if not prices or sum(prices) == 0:
+            return 0.0
+        
+        average = sum(prices) / len(prices)
+        return round(average, 2)
+    
+    except Exception as e:
+        print(f"⚠️ Error calculating average selling price for {product_id}: {str(e)}")
+        return 0.0
+
+
 # ✅ Helper to check and send low stock notification
 async def check_and_notify_low_stock(product_id: str, store_id: str):
     """
@@ -146,16 +184,18 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
             # Create new items for the additional quantity
             items_created = await create_product_items(product_id, quantity, product_dict, store_id, org_id)
             
-            # ✅ Calculate average price from all items
+            # ✅ Calculate average price and average_selling_price from all items
             average_price = await calculate_average_price(product_id, store_id)
+            average_selling_price = await calculate_average_selling_price(product_id, store_id)
 
-            # Update product quantity and average_price
+            # Update product quantity, average_price, and average_selling_price
             await db.Inventory.update_one(
                 {"product_id": product_id, "store_id": store_id},
                 {
                     "$set": {
                         "quantity": new_quantity,
                         "average_price": average_price,
+                        "average_selling_price": average_selling_price,
                         "updated_at": datetime.utcnow()
                     }
                 }
@@ -181,7 +221,9 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
         product_dict["created_at"] = datetime.utcnow()
         product_dict["updated_at"] = datetime.utcnow()
         product_dict["status"] = "Stock-in" if quantity > 1 else "Stock-out"
+        product_dict["type"] = "order"  # ✅ Default to 'order' for manually added inventory
         product_dict["average_price"] = 0.0  # Will be updated after items are created
+        product_dict["average_selling_price"] = 0.0  # Will be calculated from items' selling_price
 
         # Insert product
         await db.Inventory.insert_one(product_dict)
@@ -189,11 +231,12 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
         # Create individual items for this product
         items_created = await create_product_items(new_product_id, quantity, product_dict, store_id, org_id)
         
-        # ✅ Calculate and update average price after items are created
+        # ✅ Calculate and update average price and average_selling_price after items are created
         average_price = await calculate_average_price(new_product_id, store_id)
+        average_selling_price = await calculate_average_selling_price(new_product_id, store_id)
         await db.Inventory.update_one(
             {"product_id": new_product_id, "store_id": store_id},
-            {"$set": {"average_price": average_price}}
+            {"$set": {"average_price": average_price, "average_selling_price": average_selling_price}}
         )
         
         # ✅ Check for low stock after adding new product
@@ -224,6 +267,13 @@ async def create_product_items(product_id: str, quantity: int, product_data: dic
             # Generate unique item ID
             item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
             
+            # ✅ Calculate selling_price at item level: unit_price + 50
+            try:
+                unit_price_float = float(product_data.get('unit_price', 0))
+                item_selling_price = round(unit_price_float + 50, 2)
+            except (ValueError, TypeError):
+                item_selling_price = 50.0  # Default if conversion fails
+            
             item_dict = {
                 "org_id": org_id,
                 "store_id": store_id,
@@ -231,6 +281,7 @@ async def create_product_items(product_id: str, quantity: int, product_data: dic
                 "product_id": product_id,
                 "item_name": product_data.get('product_name', ''),
                 "unit_price": "0",  # Can be set later or from product data
+                "selling_price": item_selling_price,  # Calculated at item level: unit_price + 50
                 "vendor_id": None,
                 "vendor_name": None,
                 "serial_no": None,
@@ -703,10 +754,13 @@ async def delete_item_by_id(item_id: str, store_id: str = None):
 
 
 # ✅ 11. Mark Item as Sold (and auto-update product quantity)
-async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None):
+async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None, selling_price: float = None):
     """
     Mark an item as sold and automatically update product quantity.
     This is the correct approach - we sell ITEMS, not products!
+    
+    Args:
+        selling_price: Optional custom selling price. If not provided, uses product's default.
     """
     try:
         # Get item details first
@@ -722,7 +776,7 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None):
         
         product_id = item.get("product_id")
         
-        # Mark item as sold
+        # Mark item as sold - do NOT update selling_price (keep original value set during creation)
         await db.ProductItems.update_one(
             {"item_id": item_id, "store_id": store_id},
             {
@@ -769,12 +823,23 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None):
 
 
 # ✅ 11b. Mark Multiple Items as Sold (for bulk operations)
-async def mark_items_as_sold_bulk(product_id: str, quantity: int, store_id: str, order_id: str = None):
+async def mark_items_as_sold_bulk(product_id: str, quantity: int, store_id: str, order_id: str = None, selling_price: float = None):
     """
     Mark multiple items of a product as sold at once.
     Example: Sell 2 iPhones - this marks 2 iPhone items as sold
+    
+    Args:
+        selling_price: Optional custom selling price. If not provided, uses product's average_selling_price.
     """
     try:
+        # ✅ Use provided selling_price, or fallback to product's average_selling_price
+        if selling_price is None:
+            product = await db.Inventory.find_one(
+                {"product_id": product_id, "store_id": store_id},
+                {"average_selling_price": 1}
+            )
+            selling_price = product.get("average_selling_price") if product else None
+        
         # Find available items for this product
         available_items = await db.ProductItems.find(
             {
@@ -790,7 +855,7 @@ async def mark_items_as_sold_bulk(product_id: str, quantity: int, store_id: str,
                 detail=f"Not enough items available. Requested: {quantity}, Available: {len(available_items)}"
             )
         
-        # Mark each item as sold
+        # Mark each item as sold and capture selling_price
         items_sold = []
         for item in available_items:
             await db.ProductItems.update_one(
@@ -798,6 +863,7 @@ async def mark_items_as_sold_bulk(product_id: str, quantity: int, store_id: str,
                 {
                     "$set": {
                         "status": "sold",
+                        "selling_price": selling_price,  # Use custom or product's selling_price
                         "sold_order_id": order_id,
                         "sold_at": datetime.utcnow(),
                         "updated_at": datetime.utcnow()

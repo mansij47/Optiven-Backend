@@ -1,9 +1,17 @@
 
 from fastapi import FastAPI, Request, APIRouter
 from app.middlewares.jwt_middleware import JWTAuthMiddleware
-from app.routes import admin_routes, auth_routes, sales_routes, super_admin_routes, procurement_routes
+from app.routes import admin_routes, auth_routes, sales_routes, super_admin_routes, procurement_routes, invoice_routes
 from fastapi.middleware.cors import CORSMiddleware
 from app.utils.auth import decode_token
+
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("✅ Environment variables loaded")
+except ImportError:
+    print("⚠️  python-dotenv not installed")
  
 app = FastAPI(title="Optiven Backend")
 router = APIRouter()
@@ -14,6 +22,7 @@ router.include_router(admin_routes.router, tags=["Admin"], prefix="/api/admin")
 router.include_router(procurement_routes.router, tags=["Procurement"], prefix="/api/procurement")
 router.include_router(sales_routes.router, tags=["Sales"], prefix="/api/sales")
 router.include_router(auth_routes.router, tags=["Auth"], prefix="/api/auth")
+router.include_router(invoice_routes.router, tags=["Invoice Extraction"], prefix="/api/invoice")
 
 app.include_router(router)
 

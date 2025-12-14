@@ -62,6 +62,68 @@ from datetime import datetime
 #     return orders
 
 
+# ✅ Helper function to calculate average selling_price from available items
+async def calculate_average_selling_price_from_items(product_id: str, store_id: str) -> float:
+    """
+    Calculate average selling_price from all available items of a product.
+    Only uses selling_price field. Returns 0.0 if no items found or items don't have selling_price.
+    """
+    if not product_id:
+        return 0.0
+    
+    items_cursor = db.ProductItems.find({
+        "product_id": product_id,
+        "store_id": store_id,
+        "status": "available"
+    }, {"selling_price": 1, "_id": 0})
+    
+    items = await items_cursor.to_list(length=None)
+    
+    if not items:
+        return 0.0
+    
+    total_price = 0.0
+    valid_count = 0
+    
+    for item in items:
+        try:
+            price_value = item.get("selling_price", 0)
+            if isinstance(price_value, str):
+                price_value = float(price_value) if price_value and price_value != "0" else 0.0
+            else:
+                price_value = float(price_value) if price_value else 0.0
+            
+            if price_value > 0:
+                total_price += price_value
+                valid_count += 1
+        except (ValueError, TypeError):
+            continue
+    
+    if valid_count > 0:
+        return round(total_price / valid_count, 2)
+    
+    return 0.0
+
+
+# ✅ Helper function to calculate total price for a product (same logic as Add Order)
+def calculate_product_total_price(unit_price: float, tax: float, quantity: int) -> float:
+    """
+    Calculate total price for a product: quantity * (unit_price + tax_amount)
+    Tax amount = (unit_price * tax / 100)
+    Same logic as frontend Add Order page
+    """
+    try:
+        unit_price = float(unit_price) if unit_price else 0.0
+        tax = float(tax) if tax else 0.0
+        quantity = int(quantity) if quantity else 0
+        
+        tax_amount = (unit_price * tax) / 100
+        total = quantity * (unit_price + tax_amount)
+        return round(total, 2)
+    except (ValueError, TypeError):
+        return 0.0
+
+
 async def get_all_sales_orders(store_id: str):
     cursor = db.SalesOrders.find(
         {"order_status": "0", "store_id": store_id},
@@ -89,6 +151,10 @@ async def get_all_sales_orders(store_id: str):
             product_status = "Stock-out" if available_items_count <= 1 else "Stock-in"
             product["product_status"] = product_status
             
+            # ✅ Calculate average selling_price from available items using helper function
+            avg_selling_price = await calculate_average_selling_price_from_items(product_id, store_id)
+            product["unit_price"] = avg_selling_price  # Set to 0 if no selling_price exists
+            
             # ✅ ITEM-BASED APPROACH: Add item details for tracking (only basic info for list view)
             if item_ids:
                 product["item_count"] = len(item_ids)
@@ -101,6 +167,17 @@ async def get_all_sales_orders(store_id: str):
 
         # Replace products list
         order["products"] = updated_products
+        
+        # ✅ Recalculate total_order_price dynamically
+        total_order_price = 0.0
+        for product in updated_products:
+            unit_price = float(product.get("unit_price", 0))
+            tax = float(product.get("tax", 0))
+            quantity = int(product.get("order_quantity", 0))
+            product_total = calculate_product_total_price(unit_price, tax, quantity)
+            total_order_price += product_total
+        
+        order["total_order_price"] = round(total_order_price, 2)
 
         # Convert status field
         order["status"] = parse_status_string(order.get("status", "0"))
@@ -120,10 +197,15 @@ async def get_all_sold_orders(store_id: str):
     orders = await cursor.to_list(length=None)
 
     for order in orders:
-        # ✅ ITEM-BASED APPROACH: Add item count for each product
+        # ✅ ITEM-BASED APPROACH: Add item count and selling_price for each product
         updated_products = []
         for product in order.get("products", []):
+            product_id = product.get("product_id")
             item_ids = product.get("item_ids", [])
+            
+            # ✅ Calculate average selling_price from items using helper function
+            avg_selling_price = await calculate_average_selling_price_from_items(product_id, store_id)
+            product["unit_price"] = avg_selling_price  # Set to 0 if no selling_price exists
             
             # Add item tracking metadata
             if item_ids:
@@ -136,6 +218,17 @@ async def get_all_sold_orders(store_id: str):
             updated_products.append(product)
         
         order["products"] = updated_products
+        
+        # ✅ Recalculate total_order_price dynamically
+        total_order_price = 0.0
+        for product in updated_products:
+            unit_price = float(product.get("unit_price", 0))
+            tax = float(product.get("tax", 0))
+            quantity = int(product.get("order_quantity", 0))
+            product_total = calculate_product_total_price(unit_price, tax, quantity)
+            total_order_price += product_total
+        
+        order["total_order_price"] = round(total_order_price, 2)
         
         # Convert order_status to status text
         order["status"] = parse_status_string(order["order_status"])
@@ -161,6 +254,18 @@ async def update_inventory_for_order(order, store_id: str):
     for product in order.get("products", []):
         product_id = product.get("product_id")
         order_quantity = int(product.get("order_quantity", 0))  # Correct field
+        
+        # ✅ Get selling_price from order's product (custom price set by sales)
+        # If not provided, fallback to product's average_selling_price
+        order_selling_price = product.get("selling_price")
+        
+        # If selling_price not in order, get from product level
+        if not order_selling_price:
+            product_doc = await db.Inventory.find_one(
+                {"product_id": product_id, "store_id": store_id},
+                {"average_selling_price": 1}
+            )
+            order_selling_price = product_doc.get("average_selling_price") if product_doc else None
 
         # ✅ Find available items for this product (hierarchical structure)
         available_items = await db.ProductItems.find(
@@ -178,13 +283,14 @@ async def update_inventory_for_order(order, store_id: str):
         # Store the item IDs that were sold for this product
         sold_item_ids = []
         
-        # ✅ Mark each item as sold
+        # ✅ Mark each item as sold with actual selling_price from order
         for item in available_items:
             item_id = item["item_id"]
             sold_item_ids.append(item_id)
             
             # ✅ Preserve previous sales history by using $push to add to sales_history array
             # If item was previously sold and returned, we keep that history
+            # Do NOT update selling_price - keep the original value set during item creation
             update_data = {
                 "$set": {
                     "status": "sold",
@@ -482,12 +588,18 @@ async def get_product_details_service(store_id: str, product_id: Optional[str] =
     if product_id:
         query["product_id"] = product_id
     elif product_name:
-        query["product_name"] = product_name
+        # Trim whitespace and normalize spaces - use flexible regex without anchors
+        product_name = product_name.strip()
+        # Escape special regex characters and allow flexible matching
+        import re
+        escaped_name = re.escape(product_name)
+        # Use flexible matching - case insensitive, allows extra whitespace
+        query["product_name"] = {"$regex": escaped_name, "$options": "i"}
 
     product = await db.Inventory.find_one(query, {"_id": 0})
 
     if not product:
-        raise HTTPException(status_code=404, detail="Product not found for this store")
+        raise HTTPException(status_code=404, detail=f"Product not found for this store. Searched for: '{product_name}' in store: '{store_id}'")
 
     # ✅ Get available items count from ProductItems
     available_items_count = await db.ProductItems.count_documents({
@@ -496,16 +608,16 @@ async def get_product_details_service(store_id: str, product_id: Optional[str] =
         "status": "available"
     })
 
-    # ✅ Calculate average price from ProductItems
+    # ✅ Calculate average selling_price from ProductItems
     items_cursor = db.ProductItems.find({
         "product_id": product.get("product_id"),
         "store_id": store_id,
         "status": "available"
-    }, {"unit_price": 1, "_id": 0})
+    }, {"selling_price": 1, "_id": 0})
     
     items = await items_cursor.to_list(length=None)
     
-    # Calculate average price - handle string values and zeros
+    # Calculate average selling price - handle string values and zeros
     average_price = 0.0
     if items:
         total_price = 0.0
@@ -513,7 +625,7 @@ async def get_product_details_service(store_id: str, product_id: Optional[str] =
         
         for item in items:
             try:
-                price_value = item.get("unit_price", 0)
+                price_value = item.get("selling_price", 0)
                 # Convert string to float if needed
                 if isinstance(price_value, str):
                     price_value = float(price_value) if price_value and price_value != "0" else 0.0
@@ -529,10 +641,10 @@ async def get_product_details_service(store_id: str, product_id: Optional[str] =
         if valid_count > 0:
             average_price = round(total_price / valid_count, 2)
     
-    # If still 0, try to get from Inventory table
+    # If still 0, try to get from product's average_selling_price
     if average_price == 0:
         try:
-            inv_price = product.get("unit_price", 0)
+            inv_price = product.get("average_selling_price", 0)
             if isinstance(inv_price, str):
                 average_price = float(inv_price) if inv_price and inv_price != "0" else 0.0
             else:
@@ -589,6 +701,10 @@ async def get_sales_order_by_id(order_id: str, store_id: str):
         product_status = "Stock-out" if available_items_count <= 1 else "Stock-in"
         product["product_status"] = product_status
         
+        # ✅ Calculate average selling_price from available items using helper function
+        avg_selling_price = await calculate_average_selling_price_from_items(product_id, store_id)
+        product["unit_price"] = avg_selling_price  # Set to 0 if no selling_price exists
+        
         # ✅ ITEM-BASED APPROACH: Fetch full item details if item_ids exist
         if item_ids:
             items_details = []
@@ -626,6 +742,18 @@ async def get_sales_order_by_id(order_id: str, store_id: str):
 
     # Final transformation
     order["products"] = updated_products
+    
+    # ✅ Recalculate total_order_price dynamically
+    total_order_price = 0.0
+    for product in updated_products:
+        unit_price = float(product.get("unit_price", 0))
+        tax = float(product.get("tax", 0))
+        quantity = int(product.get("order_quantity", 0))
+        product_total = calculate_product_total_price(unit_price, tax, quantity)
+        total_order_price += product_total
+    
+    order["total_order_price"] = round(total_order_price, 2)
+    
     order["status"] = parse_status_string(order.get("status", "0"))
 
     if "order_status" in order:
@@ -648,6 +776,10 @@ async def get_sold_order_by_id(order_id: str, store_id: str):
         product_id = product.get("product_id")
         item_ids = product.get("item_ids", [])
         
+        # ✅ Calculate average selling_price from available items using helper function
+        avg_selling_price = await calculate_average_selling_price_from_items(product_id, store_id)
+        product["unit_price"] = avg_selling_price  # Set to 0 if no selling_price exists
+        
         # Fetch full item details if item_ids exist
         if item_ids:
             items_details = []
@@ -667,6 +799,7 @@ async def get_sold_order_by_id(order_id: str, store_id: str):
                         "purchase_date": item.get("purchase_date"),
                         "delivery_date": item.get("delivery_date"),
                         "unit_price": item.get("unit_price"),
+                        "selling_price": item.get("selling_price"),  # ✅ Selling price captured at time of sale
                         "batch_number": item.get("batch_number"),
                         "serial_number": item.get("serial_number"),
                         "status": item.get("status"),
@@ -686,6 +819,17 @@ async def get_sold_order_by_id(order_id: str, store_id: str):
         updated_products.append(product)
     
     order["products"] = updated_products
+    
+    # ✅ Recalculate total_order_price dynamically
+    total_order_price = 0.0
+    for product in updated_products:
+        unit_price = float(product.get("unit_price", 0))
+        tax = float(product.get("tax", 0))
+        quantity = int(product.get("order_quantity", 0))
+        product_total = calculate_product_total_price(unit_price, tax, quantity)
+        total_order_price += product_total
+    
+    order["total_order_price"] = round(total_order_price, 2)
     
     # Convert order_status to a readable status and remove original key
     order["status"] = parse_status_string(order.get("order_status", ""))
