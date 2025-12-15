@@ -168,100 +168,177 @@ async def delete_old_products(store_id: str, month: int = None, older_than_month
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting old products: {str(e)}")
 
-# for the salesorder deletion 
-# import re
-# async def delete_old_products(store_id: str, month: int = None, older_than_months: int = None):
-#     try:
-#         query = {"store_id": store_id}
-#         cursor = db.SalesOrders.find(query)
-#         all_products = await cursor.to_list(length=None)
 
-#         to_delete_ids = []
-#         now = datetime.now()
+# DELETE PURCHASE ORDERS - OLD DATA
+async def delete_old_products(store_id: str, month: int = None, older_than_months: int = None):
+    try:
+        now = datetime.utcnow()
 
-#         # ✅ Case 1: No filters — delete all
-#         if not month and not older_than_months:
-#             all_ids = [ObjectId(str(p["_id"])) for p in all_products if "_id" in p]
-#             if not all_ids:
-#                 return {
-#                     "deleted_count": 0,
-#                     "total_count": len(all_products),
-#                     "message": "No products found for this store",
-#                     "filter_type": "none",
-#                     "filter_value": None
-#                 }
+        # ✅ Case 1: Delete all products for store
+        if not month and not older_than_months:
+            result = await db.PurchaseOrders.delete_many({"store_id": store_id})
+            return {
+                "deleted_count": result.deleted_count,
+                "message": "All purchase orders deleted for this store",
+                "filter_type": "none",
+                "filter_value": None
+            }
 
-#             result = await db.SalesOrders.delete_many({"_id": {"$in": all_ids}})
-#             return {
-#                 "deleted_count": result.deleted_count,
-#                 "total_count": len(all_products),
-#                 "message": "All products deleted for this store",
-#                 "filter_type": "none",
-#                 "filter_value": None
-#             }
+        # ✅ Case 2: Delete by month (MongoDB query)
+        if month:
+            # Calculate start & end of month (current year)
+            start_date = datetime(now.year, month, 1)
+            if month == 12:
+                end_date = datetime(now.year + 1, 1, 1)
+            else:
+                end_date = datetime(now.year, month + 1, 1)
 
-#         # ✅ Case 2: Filtered deletion (month or older_than)
-#         date_fields = ["order_date", "created_at", "last_updated", "date"]
-#         pattern = r"(\.\d+)?(\+\d{2}:\d{2}|Z)?$"  # to remove microseconds + timezone
+            # Try deleting by direct date comparison (if stored as ISODate)
+            result = await db.PurchaseOrders.delete_many({
+                "store_id": store_id,
+                "delivery_date": {
+                    "$gte": start_date.isoformat(),
+                    "$lt": end_date.isoformat()
+                }
+            })
 
-#         for product in all_products:
-#             date_str = None
-#             for field in date_fields:
-#                 if field in product:
-#                     date_str = str(product[field])
-#                     break
+            # If deleted_count = 0, try fallback (string-based)
+            if result.deleted_count == 0:
+                result = await db.PurchaseOrders.delete_many({
+                    "store_id": store_id,
+                    "delivery_date": {
+                        "$regex": f"^{now.year}-{str(month).zfill(2)}"
+                    }
+                })
 
-#             if not date_str:
-#                 continue
+            return {
+                "deleted_count": result.deleted_count,
+                "message": "Filtered purchase orders deleted successfully",
+                "filter_type": "month",
+                "filter_value": month
+            }
 
-#             # 🔹 Clean timezone and microseconds from string
-#             clean_date_str = re.sub(pattern, "", date_str)
+        # ✅ Case 3: Delete older than X months
+        if older_than_months:
+            threshold_date = now - timedelta(days=older_than_months * 30)
 
-#             parsed_date = None
-#             # Try both precise and fallback formats
-#             for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-#                 try:
-#                     parsed_date = datetime.strptime(clean_date_str, fmt)
-#                     break
-#                 except Exception:
-#                     continue
+            result = await db.PurchaseOrders.delete_many({
+                "store_id": store_id,
+                "delivery_date": {"$lt": threshold_date.isoformat()}
+            })
 
-#             if not parsed_date:
-#                 print(f"⚠️ Still failed to parse: {date_str}")
-#                 continue
+            # fallback for string-based dates
+            if result.deleted_count == 0:
+                result = await db.PurchaseOrders.delete_many({
+                    "store_id": store_id,
+                    "delivery_date": {"$regex": f"^{threshold_date.year}-"}
+                })
 
-#             # --- Apply filters ---
-#             if month and parsed_date.month == int(month):
-#                 to_delete_ids.append(ObjectId(product["_id"]))
-#                 print(f"✅ Matched month {month}: {product['_id']} ({parsed_date})")
+            return {
+                "deleted_count": result.deleted_count,
+                "message": "Filtered purchase orders deleted successfully",
+                "filter_type": "older_than",
+                "filter_value": older_than_months
+            }
 
-#             elif older_than_months:
-#                 threshold_date = now - timedelta(days=older_than_months * 30)
-#                 if parsed_date < threshold_date:
-#                     to_delete_ids.append(ObjectId(product["_id"]))
-#                     print(f"✅ Matched old product: {product['_id']} ({parsed_date})")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting old purchase orders: {str(e)}")
 
-#         # ✅ Perform deletion
-#         if not to_delete_ids:
-#             print("⚠️ No matching products found for deletion.")
-#             return {
-#                 "deleted_count": 0,
-#                 "total_count": len(all_products),
-#                 "message": "No products found matching the filter criteria",
-#                 "filter_type": "month" if month else "older_than",
-#                 "filter_value": month or older_than_months
-#             }
 
-#         result = await db.SalesOrders.delete_many({"_id": {"$in": to_delete_ids}})
-#         print(f"✅ Deleted {result.deleted_count} products.")
+# FOR SALESORDERS DELETE WITH STRING DATE HANDLING OF OLD PRODUCTS 
+import re
+async def delete_old_products(store_id: str, month: int = None, older_than_months: int = None):
+    try:
+        query = {"store_id": store_id}
+        cursor = db.SalesOrders.find(query)
+        all_products = await cursor.to_list(length=None)
 
-#         return {
-#             "deleted_count": result.deleted_count,
-#             "total_count": len(all_products),
-#             "message": f"{result.deleted_count} product(s) deleted successfully",
-#             "filter_type": "month" if month else "older_than",
-#             "filter_value": month or older_than_months
-#         }
+        to_delete_ids = []
+        now = datetime.now()
 
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Error deleting old products: {str(e)}")
+        # ✅ Case 1: No filters — delete all
+        if not month and not older_than_months:
+            all_ids = [ObjectId(str(p["_id"])) for p in all_products if "_id" in p]
+            if not all_ids:
+                return {
+                    "deleted_count": 0,
+                    "total_count": len(all_products),
+                    "message": "No products found for this store",
+                    "filter_type": "none",
+                    "filter_value": None
+                }
+
+            result = await db.SalesOrders.delete_many({"_id": {"$in": all_ids}})
+            return {
+                "deleted_count": result.deleted_count,
+                "total_count": len(all_products),
+                "message": "All products deleted for this store",
+                "filter_type": "none",
+                "filter_value": None
+            }
+
+        # ✅ Case 2: Filtered deletion (month or older_than)
+        date_fields = ["order_date", "created_at", "last_updated", "date"]
+        pattern = r"(\.\d+)?(\+\d{2}:\d{2}|Z)?$"  # to remove microseconds + timezone
+
+        for product in all_products:
+            date_str = None
+            for field in date_fields:
+                if field in product:
+                    date_str = str(product[field])
+                    break
+
+            if not date_str:
+                continue
+
+            # 🔹 Clean timezone and microseconds from string
+            clean_date_str = re.sub(pattern, "", date_str)
+
+            parsed_date = None
+            # Try both precise and fallback formats
+            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    parsed_date = datetime.strptime(clean_date_str, fmt)
+                    break
+                except Exception:
+                    continue
+
+            if not parsed_date:
+                print(f"⚠️ Still failed to parse: {date_str}")
+                continue
+
+            # --- Apply filters ---
+            if month and parsed_date.month == int(month):
+                to_delete_ids.append(ObjectId(product["_id"]))
+                print(f"✅ Matched month {month}: {product['_id']} ({parsed_date})")
+
+            elif older_than_months:
+                threshold_date = now - timedelta(days=older_than_months * 30)
+                if parsed_date < threshold_date:
+                    to_delete_ids.append(ObjectId(product["_id"]))
+                    print(f"✅ Matched old product: {product['_id']} ({parsed_date})")
+
+        # ✅ Perform deletion
+        if not to_delete_ids:
+            print("⚠️ No matching products found for deletion.")
+            return {
+                "deleted_count": 0,
+                "total_count": len(all_products),
+                "message": "No products found matching the filter criteria",
+                "filter_type": "month" if month else "older_than",
+                "filter_value": month or older_than_months
+            }
+
+        result = await db.SalesOrders.delete_many({"_id": {"$in": to_delete_ids}})
+        print(f"✅ Deleted {result.deleted_count} products.")
+
+        return {
+            "deleted_count": result.deleted_count,
+            "total_count": len(all_products),
+            "message": f"{result.deleted_count} product(s) deleted successfully",
+            "filter_type": "month" if month else "older_than",
+            "filter_value": month or older_than_months
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting old products: {str(e)}")

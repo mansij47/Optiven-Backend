@@ -387,6 +387,14 @@ async def mark_order_as_sold(order_id: str, store_id: str):
         }
     )
     
+    # \ud83c\udd95 AUTO-SYNC: Add this sold order to ProfitOrders collection
+    try:
+        from app.services import admin_profitOrders_service
+        await admin_profitOrders_service.sync_profit_orders_from_sales(store_id)
+    except Exception as e:
+        # Log error but don't fail the main operation
+        print(f"Warning: Failed to sync profit orders: {str(e)}")
+    
     return 1  # Return success count
 
 

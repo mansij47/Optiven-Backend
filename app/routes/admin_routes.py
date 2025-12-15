@@ -840,6 +840,26 @@ async def export_profit_orders(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# Sync Profit Orders from SalesOrders
+@router.post("/sync_profitOrders", summary="Sync Profit Orders from SalesOrders")
+async def sync_profit_orders(request: Request):
+    """
+    Manually sync profit orders from SalesOrders collection to ProfitOrders collection.
+    This ensures all sold orders (status=1) are reflected in ProfitOrders for proper CRUD operations.
+    """
+    try:
+        user = request.state.user
+        
+        if user["role"] != "admin":
+            raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+        
+        store_id = user["store_id"]
+        
+        return await admin_profitOrders_service.sync_profit_orders_from_sales(store_id)
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ================== END PROFIT ORDERS ==================
 
 

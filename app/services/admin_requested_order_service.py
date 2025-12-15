@@ -150,7 +150,8 @@ async def raise_order_request_service(data: dict, org_id: str, store_id: str, re
             "sub_category": data.get("sub_category", ""),
             "estimate_date": data.get("estimate_date", datetime.utcnow().strftime("%Y-%m-%d")),
             "requested_by": requested_by,
-            "created_at": datetime.utcnow()  # real datetime
+            "created_at": datetime.utcnow(),  # real datetime
+            "updated_at": datetime.utcnow()  # real datetime
         }
         await db.RequestedOrders.insert_one(request_doc)
         return {"message": "Request raised successfully", "request_id": request_id}
