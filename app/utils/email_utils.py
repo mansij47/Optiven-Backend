@@ -67,7 +67,7 @@ def send_welcome_email(to_email: str, password: str) -> bool:
             login_url= LOGIN_URL
         )
 
-        print("📧 Sending email to:", to_email)
+        print(" Sending email to:", to_email)
         # Create email
         msg = MIMEMultipart("related")
         msg["Subject"] = "Welcome to Inventory Management System"
@@ -91,10 +91,10 @@ def send_welcome_email(to_email: str, password: str) -> bool:
             server.login(EMAIL_USER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_USER, to_email, msg.as_string())
 
-        print("✅ Email sent successfully to", to_email)
+        print(" Email sent successfully to", to_email)
 
         return True
 
     except Exception as e:
-        print("❌ Error sending email:", e)
+        print(" Error sending email:", e)
         return False

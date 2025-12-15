@@ -17,7 +17,7 @@ try:
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
-    print("⚠️  google-generativeai not installed")
+    print("  google-generativeai not installed")
 
 
 # Initialize Gemini model (singleton pattern)
@@ -35,21 +35,21 @@ def _initialize_gemini() -> Optional[Any]:
     _model_initialized = True
     
     if not GEMINI_AVAILABLE:
-        print("⚠️  LLM validation disabled - google-generativeai not installed")
+        print(" LLM validation disabled - google-generativeai not installed")
         return None
     
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
-        print("⚠️  LLM validation disabled - GEMINI_API_KEY not found")
+        print("  LLM validation disabled - GEMINI_API_KEY not found")
         return None
     
     try:
         genai.configure(api_key=api_key)
         _gemini_model = genai.GenerativeModel('models/gemini-flash-latest')
-        print("✅ LLM validator initialized (Gemini Flash Latest)")
+        print(" LLM validator initialized (Gemini Flash Latest)")
         return _gemini_model
     except Exception as e:
-        print(f"❌ Failed to initialize LLM: {e}")
+        print(f" Failed to initialize LLM: {e}")
         return None
 
 
@@ -148,11 +148,11 @@ def _parse_llm_response(response_text: str, original_data: Dict[str, Any]) -> Di
         return result
         
     except json.JSONDecodeError as e:
-        print(f"❌ Failed to parse LLM response: {e}")
+        print(f" Failed to parse LLM response: {e}")
         print(f"Response: {response_text[:300]}")
         return original_data
     except Exception as e:
-        print(f"❌ Error processing LLM response: {e}")
+        print(f" Error processing LLM response: {e}")
         return original_data
 
 
@@ -175,23 +175,23 @@ def validate_and_enhance(
     model = _initialize_gemini()
     
     if not model:
-        print(f"⚠️  LLM not available - returning original {data_type} data")
+        print(f"  LLM not available - returning original {data_type} data")
         return extracted_data
     
     try:
-        print(f"🤖 Validating {data_type} data with LLM...")
-        print(f"📝 Before LLM: {json.dumps({k: v for k, v in extracted_data.items() if v is not None}, indent=2)}")
+        print(f" Validating {data_type} data with LLM...")
+        print(f" Before LLM: {json.dumps({k: v for k, v in extracted_data.items() if v is not None}, indent=2)}")
         
         prompt = _create_validation_prompt(extracted_data, full_text, data_type)
         response = model.generate_content(prompt)
         corrected_data = _parse_llm_response(response.text, extracted_data)
         
-        print(f"✅ After LLM: {json.dumps({k: v for k, v in corrected_data.items() if v is not None}, indent=2)}")
-        print(f"✅ {data_type.capitalize()} validation completed")
+        print(f" After LLM: {json.dumps({k: v for k, v in corrected_data.items() if v is not None}, indent=2)}")
+        print(f" {data_type.capitalize()} validation completed")
         return corrected_data
         
     except Exception as e:
-        print(f"⚠️  LLM validation failed: {e}")
+        print(f"  LLM validation failed: {e}")
         return extracted_data
 
 

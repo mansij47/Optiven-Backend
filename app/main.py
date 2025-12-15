@@ -10,9 +10,9 @@ from app.utils.auth import decode_token
 try:
     from dotenv import load_dotenv
     load_dotenv()
-    print("✅ Environment variables loaded")
+    print(" Environment variables loaded")
 except ImportError:
-    print("⚠️  python-dotenv not installed")
+    print("  python-dotenv not installed")
  
 app = FastAPI(title="Optiven Backend")
 router = APIRouter()

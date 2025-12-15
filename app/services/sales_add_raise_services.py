@@ -12,7 +12,7 @@ async def add_sales_order(order_data: dict, store_id: str):
     # Process products and detect preorder/stock-out condition
     final_products, subtotal, stock_out_or_preorder = await process_products(order_data.get("products", []), store_id)
 
-    # print(f"[DEBUG] Final products after processing: {final_products}")
+  
     # Fill order fields
     order_data["products"] = final_products
     order_data["total_order_price"] = round(subtotal, 2)
@@ -45,13 +45,13 @@ async def process_products(products: list, store_id: str):
     subtotal = 0.0
     stock_out_or_preorder = False
 
-    # print(f"[DEBUG] Incoming products to process: {products}")
+
     
     for prod in products:
         product_id = prod.get("product_id", "")
         order_quantity = prod["quantity"]
         
-        # print(f"[DEBUG] Processing product: product_id='{product_id}', product_name='{prod.get('product_name')}', quantity={order_quantity}")
+       
 
         # Check if product_id is empty (preorder case) - skip inventory lookup
         if not product_id or product_id.strip() == "":
@@ -112,7 +112,6 @@ async def process_products(products: list, store_id: str):
             # Leave product_id empty - will be populated when inventory is created
             product_name = prod.get("product_name") or prod.get("name") or "Unknown"
             print(f"Product not in inventory, creating preorder: {prod}")
-            print(f"[DEBUG] Extracted product_name: {product_name}")
             
             product_detail = {
                 "product_id": "",  # Empty - will be updated when inventory is added
@@ -147,7 +146,7 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
     # ✅ Get order type from sales order (preorder or order)
     order_type = order.get("type", "order")  # Default to "order" if not specified
 
-    # print(f"[DEBUG] Preparing request for product: {product_name}, order_quantity: {order_quantity}")
+   
 
     # Try to find inventory item (may not exist for preorders) - case-insensitive
     inventory_item = await db.Inventory.find_one({
@@ -235,7 +234,7 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
 async def raise_request_order_service(order_id: str, estimate_date: str, org_id: str, store_id: str, requester: dict):
     request_data = await prepare_request_data(order_id, store_id, estimate_date, org_id, requester)
 
-    # print(f"[DEBUG] Request data prepared: {request_data}")
+
 
     # ---- Minimal hardening ----
     qty = int(request_data.get("quantity", 0))
@@ -245,7 +244,7 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
     if qty == 0:
         raise HTTPException(status_code=400, detail="Cannot raise request with 0 quantity. Product may already be in stock.")
 
-    print(f"[DEBUG] Quantity to increment: {qty}")
+    
 
     # Build a deterministic matcher (add category if present in your data)
     matcher = {
@@ -256,7 +255,6 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
     if request_data.get("category"):
         matcher["category"] = request_data["category"]
     
-    # print(f"[DEBUG] Matcher: {matcher}")
 
     # Prepare $setOnInsert with all fields from request_data except 'quantity' and fields in $set
     insert_snapshot = dict(request_data)  # shallow copy
@@ -298,8 +296,7 @@ async def fetch_sales_order(order_id: str, store_id: str):
     order_id = order_id.strip()
     store_id = store_id.strip()
     
-    # Debug print to check what we're searching for
-    print(f"Searching for order_id: '{order_id}' in store_id: '{store_id}'")
+    
     
     # Find the specific order for this store
     order = await db.SalesOrders.find_one({"order_id": order_id, "store_id": store_id}, {"_id": 0})

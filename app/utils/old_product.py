@@ -304,23 +304,22 @@ async def delete_old_products(store_id: str, month: int = None, older_than_month
                     continue
 
             if not parsed_date:
-                print(f"⚠️ Still failed to parse: {date_str}")
+                print(f" Still failed to parse: {date_str}")
                 continue
 
             # --- Apply filters ---
             if month and parsed_date.month == int(month):
                 to_delete_ids.append(ObjectId(product["_id"]))
-                print(f"✅ Matched month {month}: {product['_id']} ({parsed_date})")
+                print(f" Matched month {month}: {product['_id']} ({parsed_date})")
 
             elif older_than_months:
                 threshold_date = now - timedelta(days=older_than_months * 30)
                 if parsed_date < threshold_date:
                     to_delete_ids.append(ObjectId(product["_id"]))
-                    print(f"✅ Matched old product: {product['_id']} ({parsed_date})")
+                    print(f" Matched old product: {product['_id']} ({parsed_date})")
 
         # ✅ Perform deletion
         if not to_delete_ids:
-            print("⚠️ No matching products found for deletion.")
             return {
                 "deleted_count": 0,
                 "total_count": len(all_products),
@@ -330,7 +329,7 @@ async def delete_old_products(store_id: str, month: int = None, older_than_month
             }
 
         result = await db.SalesOrders.delete_many({"_id": {"$in": to_delete_ids}})
-        print(f"✅ Deleted {result.deleted_count} products.")
+        print(f" Deleted {result.deleted_count} products.")
 
         return {
             "deleted_count": result.deleted_count,

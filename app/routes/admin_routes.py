@@ -234,7 +234,6 @@ async def fetch_all_products_route(request: Request):
     if not store_id:
         raise HTTPException(status_code=400, detail="Store ID missing in token.")
     response = await get_all_products(store_id)
-    # print("Fetched products:", response)
     return response
 
 
@@ -334,7 +333,6 @@ async def edit_product_patch(request: Request, product_id: str, data: Product.Pr
         raise HTTPException(status_code=400, detail="No fields provided for update.")
 
     response = await update_product_by_id(product_id, update_data)
-    print("Update response:", response)
     return response
 
 @router.put("/edit/product/{product_id}")
@@ -346,7 +344,7 @@ async def edit_product_put(request: Request, product_id: str, data: Product):
 
     update_data = data.model_dump(exclude_unset=True)
     response = await update_product_by_id(product_id, update_data)
-    print("Update response:", response)
+ 
     return response
 
 

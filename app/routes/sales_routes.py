@@ -184,7 +184,7 @@ async def fetch_all_products_route(request: Request):
         raise HTTPException(status_code=400, detail="Store ID missing in token.")
 
     response = await sales_get_update_services.get_all_products(store_id)
-    # print("Fetched products:", response)
+   
     return {"products": response}
 
 #order requested successfully notification 

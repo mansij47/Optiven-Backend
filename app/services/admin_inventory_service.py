@@ -49,7 +49,7 @@ async def calculate_average_price(product_id: str, store_id: str) -> float:
         return round(average, 2)
     
     except Exception as e:
-        print(f"⚠️ Error calculating average price for {product_id}: {str(e)}")
+        print(f" Error calculating average price for {product_id}: {str(e)}")
         return 0.0
 
 
@@ -87,7 +87,7 @@ async def calculate_average_selling_price(product_id: str, store_id: str) -> flo
         return round(average, 2)
     
     except Exception as e:
-        print(f"⚠️ Error calculating average selling price for {product_id}: {str(e)}")
+        print(f" Error calculating average selling price for {product_id}: {str(e)}")
         return 0.0
 
 
@@ -107,7 +107,9 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
         min_stock = product.get("min_stock", 4)
         current_status = product.get("status", "")
         
-        print(f"🔍 Checking low stock for {product_id}: quantity={quantity}, min_stock={min_stock}, status={current_status}")
+        print(f" Checking low stock for {product_id}: status={current_status}")
+        
+
         
         # Check if quantity has reached or dropped below min_stock threshold
         if quantity <= min_stock:
@@ -144,9 +146,9 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
                     procurement=True
                 )
                 
-                print(f"✅ Low stock alert sent for product {product_id} ({product_name}). Quantity: {quantity}, Min: {min_stock}. Notifications created: {result}")
+                print(f" Low stock alert sent for product {product_id}  Notifications created: {result}")
             else:
-                print(f"⏭️ Skipping notification for {product_id} - already in 'running-out' status")
+                print(f" Skipping notification for {product_id} - already in 'running-out' status")
         else:
             # ✅ If quantity is back above min_stock, reset status to "Stock-in"
             if current_status == "running-out":
@@ -154,10 +156,10 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
                     {"product_id": product_id, "store_id": store_id},
                     {"$set": {"status": "Stock-in", "updated_at": datetime.utcnow()}}
                 )
-                print(f"✅ Product {product_id} restocked. Status reset to Stock-in.")
+                print(f" Product {product_id} restocked. Status reset to Stock-in.")
     
     except Exception as e:
-        print(f"⚠️ Failed to check/notify low stock for {product_id}: {str(e)}")
+        print(f" Failed to check/notify low stock for {product_id}: {str(e)}")
 
 
 # ✅ 1. Add Product with Items (Hierarchical Structure)
@@ -361,7 +363,6 @@ async def get_all_products(store_id: str):
             products.append(product)
 
         # ✅ Batch process low stock checks (only once per API call)
-        print(f"🔍 Checking low stock for {len(low_stock_checks)} products...")
         for product_id, store_id, quantity, min_stock, current_status in low_stock_checks:
             await check_and_notify_low_stock(product_id, store_id)
         
