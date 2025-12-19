@@ -53,6 +53,45 @@ async def calculate_average_price(product_id: str, store_id: str) -> float:
         return 0.0
 
 
+# ✅ Helper to calculate average vendor tax from all items of a product
+async def calculate_average_vendor_tax(product_id: str, store_id: str) -> float:
+    """
+    Calculate average vendor tax from all items belonging to a product.
+    Returns None if no items found or no vendor_tax data available.
+    """
+    try:
+        items_cursor = db.ProductItems.find(
+            {"product_id": product_id, "store_id": store_id},
+            {"vendor_tax": 1, "_id": 0}
+        )
+        
+        items = await items_cursor.to_list(length=None)
+        
+        if not items:
+            return None
+        
+        # Convert vendor_tax to float and calculate average
+        taxes = []
+        for item in items:
+            vendor_tax = item.get("vendor_tax")
+            if vendor_tax is not None:
+                try:
+                    tax = float(vendor_tax)
+                    taxes.append(tax)
+                except (ValueError, TypeError):
+                    continue
+        
+        if not taxes:
+            return None
+        
+        average = sum(taxes) / len(taxes)
+        return round(average, 2)
+    
+    except Exception as e:
+        print(f" Error calculating average vendor tax for {product_id}: {str(e)}")
+        return None
+
+
 # ✅ Helper to calculate average selling price from all items of a product
 async def calculate_average_selling_price(product_id: str, store_id: str) -> float:
     """
@@ -95,7 +134,7 @@ async def calculate_average_selling_price(product_id: str, store_id: str) -> flo
 async def check_and_notify_low_stock(product_id: str, store_id: str):
     """
     Check if product quantity is at or below min_stock threshold.
-    If yes, send notification to admin and procurement, and update status to 'running-out'.
+    If yes, send notification to admin and procurement, and update status to 'Low Stock'.
     Sends notification only once when status changes to avoid spam.
     """
     try:
@@ -112,16 +151,25 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
 
         
         # Check if quantity has reached or dropped below min_stock threshold
-        if quantity <= min_stock:
+        # BUT: Stock-out (qty <= 1) takes priority over Low Stock
+        if quantity <= 1:
+            # Stock-out takes priority - don't set Low Stock for qty <= 1
+            if current_status != "Stock-out":
+                await db.Inventory.update_one(
+                    {"product_id": product_id, "store_id": store_id},
+                    {"$set": {"status": "Stock-out", "updated_at": datetime.utcnow()}}
+                )
+                print(f"✅ Status updated to 'Stock-out' for {product_id}")
+        elif quantity <= min_stock:
             from app.services.notification_service import create_notification
             from app.models.notification_model import NotificationBase, UserInfo
             
-            # ✅ Only send notification if status is NOT already "running-out" (avoid duplicate alerts)
-            if current_status != "running-out":
-                # Update product status to "running-out"
+            # ✅ Only send notification if status is NOT already "Low Stock" (avoid duplicate alerts)
+            if current_status != "Low Stock":
+                # Update product status to "Low Stock"
                 await db.Inventory.update_one(
                     {"product_id": product_id, "store_id": store_id},
-                    {"$set": {"status": "running-out", "updated_at": datetime.utcnow()}}
+                    {"$set": {"status": "Low Stock", "updated_at": datetime.utcnow()}}
                 )
                 
                 # Send notification to admin and procurement
@@ -148,10 +196,10 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
                 
                 print(f" Low stock alert sent for product {product_id}  Notifications created: {result}")
             else:
-                print(f" Skipping notification for {product_id} - already in 'running-out' status")
+                print(f" Skipping notification for {product_id} - already in 'Low Stock' status")
         else:
             # ✅ If quantity is back above min_stock, reset status to "Stock-in"
-            if current_status == "running-out":
+            if current_status == "Low Stock":
                 await db.Inventory.update_one(
                     {"product_id": product_id, "store_id": store_id},
                     {"$set": {"status": "Stock-in", "updated_at": datetime.utcnow()}}
@@ -186,17 +234,19 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
             # Create new items for the additional quantity
             items_created = await create_product_items(product_id, quantity, product_dict, store_id, org_id)
             
-            # ✅ Calculate average price and average_selling_price from all items
+            # ✅ Calculate average price, vendor_tax, and average_selling_price from all items
             average_price = await calculate_average_price(product_id, store_id)
+            average_vendor_tax = await calculate_average_vendor_tax(product_id, store_id)
             average_selling_price = await calculate_average_selling_price(product_id, store_id)
 
-            # Update product quantity, average_price, and average_selling_price
+            # Update product quantity, average_price, vendor_tax, and average_selling_price
             await db.Inventory.update_one(
                 {"product_id": product_id, "store_id": store_id},
                 {
                     "$set": {
                         "quantity": new_quantity,
                         "average_price": average_price,
+                        "vendor_tax": average_vendor_tax,
                         "average_selling_price": average_selling_price,
                         "updated_at": datetime.utcnow()
                     }
@@ -233,12 +283,17 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
         # Create individual items for this product
         items_created = await create_product_items(new_product_id, quantity, product_dict, store_id, org_id)
         
-        # ✅ Calculate and update average price and average_selling_price after items are created
+        # ✅ Calculate and update average price, vendor_tax, and average_selling_price after items are created
         average_price = await calculate_average_price(new_product_id, store_id)
+        average_vendor_tax = await calculate_average_vendor_tax(new_product_id, store_id)
         average_selling_price = await calculate_average_selling_price(new_product_id, store_id)
         await db.Inventory.update_one(
             {"product_id": new_product_id, "store_id": store_id},
-            {"$set": {"average_price": average_price, "average_selling_price": average_selling_price}}
+            {"$set": {
+                "average_price": average_price,
+                "vendor_tax": average_vendor_tax,
+                "average_selling_price": average_selling_price
+            }}
         )
         
         # ✅ Check for low stock after adding new product
@@ -315,7 +370,7 @@ async def get_all_products(store_id: str):
     Retrieves all products with their item count.
     Shows hierarchical structure: Product → Items
     Product quantity is always synced with actual item count.
-    Sorted by: Stock-out/running-out first, then by created_at descending.
+    Sorted by: Stock-out/Low Stock first, then by created_at descending.
     """
     try:
         products_cursor = (
@@ -342,6 +397,9 @@ async def get_all_products(store_id: str):
             
             # ✅ Calculate average price from all items
             average_price = await calculate_average_price(product.get("product_id"), store_id)
+            
+            # ✅ Calculate average vendor tax from all items
+            average_vendor_tax = await calculate_average_vendor_tax(product.get("product_id"), store_id)
 
             # ✅ Quantity is ALWAYS mapped to available ProductItems count
             product["quantity"] = available_items  # Use available items, not total
@@ -356,6 +414,7 @@ async def get_all_products(store_id: str):
             low_stock_checks.append((product.get("product_id"), store_id, available_items, product.get("min_stock", 4), product.get("status", "")))
             
             product["average_price"] = average_price
+            product["vendor_tax"] = average_vendor_tax  # Add vendor tax to product
             product["total_items"] = items_count
             product["available_items"] = available_items
             product.pop("_id", None)
@@ -375,13 +434,13 @@ async def get_all_products(store_id: str):
             if updated_product:
                 product["status"] = updated_product.get("status", "Stock-in") if product["quantity"] > 1 else "Stock-out"
 
-        # ✅ Sort products: Stock-out and running-out at the top, then by created_at
+        # ✅ Sort products: Stock-out and Low Stock at the top, then by created_at
         def sort_key(product):
             status = product.get("status", "Stock-in")
             created_at = product.get("created_at", datetime.min)
             
-            # Priority: 1 = Stock-out/running-out (top), 2 = Stock-in (bottom)
-            if status in ["Stock-out", "running-out"]:
+            # Priority: 1 = Stock-out/Low Stock (top), 2 = Stock-in (bottom)
+            if status in ["Stock-out", "Low Stock"]:
                 priority = 1
             else:
                 priority = 2
@@ -432,10 +491,14 @@ async def get_product_by_id(product_id: str, store_id: str):
         # ✅ Calculate average price from all items
         average_price = await calculate_average_price(product_id, store_id)
         
+        # ✅ Calculate average vendor tax from all items
+        average_vendor_tax = await calculate_average_vendor_tax(product_id, store_id)
+        
         # Update product quantity to match available items count (not total items)
         product_data["quantity"] = available_items  # ✅ Show only available items
         product_data["status"] = "Stock-in" if available_items > 1 else "Stock-out"
         product_data["average_price"] = average_price
+        product_data["vendor_tax"] = average_vendor_tax  # Add vendor tax to product
         product_data["total_items"] = len(items)  # Total including sold
         product_data["available_items"] = available_items
         
@@ -680,20 +743,26 @@ async def update_item_by_id(item_id: str, update_data: ProductItemUpdateModel, s
         update_dict = {k: v for k, v in update_data.model_dump().items() if v is not None}
         update_dict["updated_at"] = datetime.utcnow()
         
-        # Check if unit_price is being updated
+        # Check if unit_price or vendor_tax is being updated
         unit_price_updated = "unit_price" in update_dict
+        vendor_tax_updated = "vendor_tax" in update_dict
         
         await db.ProductItems.update_one(query, {"$set": update_dict})
         
-        # ✅ If unit_price was updated, recalculate product's average_price
-        if unit_price_updated:
+        # ✅ If unit_price or vendor_tax was updated, recalculate product's averages
+        if unit_price_updated or vendor_tax_updated:
             product_id = item.get("product_id")
             item_store_id = item.get("store_id")
             if product_id and item_store_id:
                 average_price = await calculate_average_price(product_id, item_store_id)
+                average_vendor_tax = await calculate_average_vendor_tax(product_id, item_store_id)
                 await db.Inventory.update_one(
                     {"product_id": product_id, "store_id": item_store_id},
-                    {"$set": {"average_price": average_price, "updated_at": datetime.utcnow()}}
+                    {"$set": {
+                        "average_price": average_price,
+                        "vendor_tax": average_vendor_tax,
+                        "updated_at": datetime.utcnow()
+                    }}
                 )
         
         updated_item = await db.ProductItems.find_one(query, {"_id": 0})

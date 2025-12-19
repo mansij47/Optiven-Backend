@@ -5,21 +5,22 @@ from app.db import db
 from app.models.procurement_models import PurchaseOrderValidationInput, PurchaseOrderValidationRequest, PurchaseOrderSubmitRequest
 import uuid
 from datetime import datetime
+from app.utils.tax_utils import calculate_tax_amount
 
 
-async def update_sales_orders_on_inventory_change(product_name: str, product_id: str, store_id: str, unit_price: float, tax: float):
+async def update_sales_orders_on_inventory_change(product_name: str, product_id: str, store_id: str, selling_price: float, consumer_tax: float):
     """
     Update sales orders when inventory is added/updated:
     - Populate product_id (was empty for preorders)
     - Change type from 'preorder' to 'order'
     - Change status from 'Preorder' to 'Stock-in'
-    - Update unit_price and tax with actual values passed from inventory
+    - Update unit_price (selling price) and tax (consumer tax) with actual values from inventory
     - Recalculate total_order_price
     Match by product_name (case-insensitive) since preorders have empty product_id
     """
-    # Use the unit_price and tax passed directly (from ProductItems or PurchaseOrder)
-    inventory_unit_price = float(unit_price)
-    inventory_tax = float(tax)
+    # Use the selling_price and consumer_tax from inventory (average_selling_price and tax fields)
+    inventory_selling_price = float(selling_price)
+    inventory_consumer_tax = float(consumer_tax)
     
     # Find all preorder sales orders with this product (case-insensitive match)
     # Also check for orders with unit_price = 0 and tax = 0 (preorder indicators)
@@ -45,21 +46,21 @@ async def update_sales_orders_on_inventory_change(product_name: str, product_id:
                 # ✅ Update all fields for the matching product
                 product["product_id"] = product_id  # Populate the product_id from inventory
                 product["product_status"] = "Stock-in"
-                product["unit_price"] = inventory_unit_price  # ✅ Update with real unit price
-                product["tax"] = inventory_tax  # ✅ Update with real tax
+                product["unit_price"] = inventory_selling_price  # ✅ Update with selling price from inventory
+                product["tax"] = inventory_consumer_tax  # ✅ Update with consumer tax from inventory
                 
-                # ✅ Calculate this product's contribution to total
+                # ✅ Calculate this product's contribution to total using tax_utils
                 order_quantity = int(product.get("order_quantity", 0))
-                line_total = (inventory_unit_price * order_quantity)
-                tax_amount = (inventory_tax * order_quantity)
+                line_total = (inventory_selling_price * order_quantity)
+                tax_amount = calculate_tax_amount(inventory_selling_price, inventory_consumer_tax, order_quantity)
                 new_total_price += (line_total + tax_amount)
             else:
-                # For other products, calculate their contribution to total
+                # For other products, calculate their contribution to total using tax_utils
                 order_quantity = int(product.get("order_quantity", 0))
                 unit_price = float(product.get("unit_price", 0))
                 tax = float(product.get("tax", 0))
                 line_total = (unit_price * order_quantity)
-                tax_amount = (tax * order_quantity)
+                tax_amount = calculate_tax_amount(unit_price, tax, order_quantity)
                 new_total_price += (line_total + tax_amount)
             
             updated_products.append(product)
@@ -78,7 +79,7 @@ async def update_sales_orders_on_inventory_change(product_name: str, product_id:
             }
         )
     
-    print(f"[INFO] Updated preorder sales orders for product: {product_name}, assigned product_id: {product_id}, unit_price: {inventory_unit_price}, tax: {inventory_tax}")
+    print(f"[INFO] Updated preorder sales orders for product: {product_name}, assigned product_id: {product_id}, selling_price: {inventory_selling_price}, consumer_tax: {inventory_consumer_tax}")
 
 
 async def validate_purchase_order_preview(
@@ -115,7 +116,8 @@ async def validate_purchase_order_preview(
         "has_warranty": order.get("has_warranty", False) or (order.get("warranty_tenure", 0) > 0),
         "warranty_tenure": order.get("warranty_tenure", 0),
         "warranty_unit": order.get("warranty_unit", "months"),
-        "tax": order.get("tax", 0),
+        "vendor_tax": order.get("vendor_tax", order.get("tax", 0)),
+        "base_price": order.get("base_price", order.get("unit_price")),
         "product_id": order.get("product_id"),
         "selected_action": data.selected_action,
     }
@@ -349,6 +351,8 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 "item_name": item_detail.get("item_name") if isinstance(item_detail, dict) else item_detail.item_name,
                 "unit_price": unit_price_value,
                 "selling_price": item_selling_price,  # Set at item level: unit_price + 50
+                "vendor_tax": float(base_order.get("vendor_tax", base_order.get("tax", 0))),  # Vendor tax from purchase order
+                "Tax": 0.0,  # Sales/GST tax - set by sales department when selling, default 0
                 "vendor_id": base_order.get("vendor_id"),
                 "vendor_name": base_order.get("vendor_name"),
                 "serial_no": item_detail.get("serial_no") if isinstance(item_detail, dict) else item_detail.serial_no,
@@ -406,6 +410,8 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                     "item_name": item_name,
                     "unit_price": unit_price,
                     "selling_price": None,  # Damaged items don't have selling price
+                    "vendor_tax": float(base_order.get("vendor_tax", base_order.get("tax", 0))),  # Vendor tax from purchase order
+                    "Tax": 0.0,  # Sales/GST tax - not applicable for damaged items
                     "vendor_id": base_order.get("vendor_id"),
                     "vendor_name": base_order.get("vendor_name"),
                     "contract_id": base_order.get("contract_id"),
@@ -481,6 +487,8 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                     "item_name": item_name,
                     "unit_price": unit_price,
                     "selling_price": None,  # Return items don't have selling price
+                    "vendor_tax": float(base_order.get("vendor_tax", base_order.get("tax", 0))),  # Vendor tax from purchase order
+                    "Tax": 0.0,  # Sales/GST tax - not applicable for return items
                     "vendor_id": base_order.get("vendor_id"),
                     "vendor_name": base_order.get("vendor_name"),
                     "contract_id": base_order.get("contract_id"),
@@ -545,25 +553,33 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             }
             await db["ReturnToVendor"].insert_one(return_doc)
         
-        # ✅ Calculate and update average_price and average_selling_price at product level
-        from app.services.admin_inventory_service import calculate_average_price, calculate_average_selling_price
+        # ✅ Calculate and update average_price, vendor_tax, and average_selling_price at product level
+        from app.services.admin_inventory_service import calculate_average_price, calculate_average_selling_price, calculate_average_vendor_tax
         average_price = await calculate_average_price(product_id, store_id)
+        
+        # ✅ Calculate average_vendor_tax from all items' vendor_tax
+        average_vendor_tax = await calculate_average_vendor_tax(product_id, store_id)
         
         # ✅ Calculate average_selling_price from all items' selling_price
         average_selling_price = await calculate_average_selling_price(product_id, store_id)
         
         await db.Inventory.update_one(
             {"product_id": product_id, "store_id": store_id},
-            {"$set": {"average_price": average_price, "average_selling_price": average_selling_price, "updated_at": datetime.utcnow()}}
+            {"$set": {
+                "average_price": average_price,
+                "vendor_tax": average_vendor_tax,
+                "average_selling_price": average_selling_price,
+                "updated_at": datetime.utcnow()
+            }}
         )
         
-        # ✅ NOW Update preorder sales orders with actual unit_price and tax from base_order
+        # ✅ NOW Update preorder sales orders with selling price and consumer tax from inventory
         await update_sales_orders_on_inventory_change(
             base_order.get("product_name"), 
             product_id, 
             store_id,
-            float(base_order.get("unit_price", 0)),
-            float(base_order.get("tax", 0))
+            float(average_selling_price),  # Use selling price from inventory
+            float(base_order.get("tax", 0))  # Consumer tax from purchase order
         )
         
         # Get updated product quantity
@@ -626,6 +642,8 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 "item_name": base_order.get("product_name"),
                 "unit_price": base_unit_price,
                 "selling_price": None,  # Damaged items don't have selling price
+                "vendor_tax": float(base_order.get("vendor_tax", base_order.get("tax", 0))),  # Vendor tax from purchase order
+                "Tax": 0.0,  # Sales/GST tax - not applicable for damaged items
                 "vendor_id": base_order.get("vendor_id"),
                 "vendor_name": base_order.get("vendor_name"),
                 "contract_id": base_order.get("contract_id"),
@@ -712,6 +730,8 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 "item_name": base_order.get("product_name"),
                 "unit_price": unit_price,
                 "selling_price": None,  # Return items don't have selling price
+                "vendor_tax": float(base_order.get("vendor_tax", base_order.get("tax", 0))),  # Vendor tax from purchase order
+                "Tax": 0.0,  # Sales/GST tax - not applicable for return items
                 "vendor_id": base_order.get("vendor_id"),
                 "vendor_name": base_order.get("vendor_name"),
                 "contract_id": base_order.get("contract_id"),

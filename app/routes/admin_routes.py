@@ -871,3 +871,72 @@ async def fetch_old_products(store_id: str, month: int = None, older_than_months
 async def remove_old_products(store_id: str, month: int = None, older_than_months: int = None):
     result = await delete_old_products(store_id, month, older_than_months)
     return result
+
+
+# ================== TAX CALCULATION ROUTES ==================
+
+from app.utils.tax_utils import (
+    calculate_product_total_for_store,
+    get_tax_info_for_store,
+    calculate_tax_amount,
+    calculate_product_total_with_tax
+)
+from pydantic import BaseModel
+
+class TaxCalculationRequest(BaseModel):
+    store_id: str
+    unit_price: float
+    quantity: int
+    override_tax_rate: Optional[float] = None
+
+
+@router.post("/calculate-tax")
+async def calculate_product_tax(request: TaxCalculationRequest):
+    """
+    Calculate tax for a product with country-based tax rate
+    """
+    try:
+        pricing = await calculate_product_total_for_store(
+            store_id=request.store_id,
+            unit_price=request.unit_price,
+            quantity=request.quantity,
+            override_tax_rate=request.override_tax_rate
+        )
+        
+        return {
+            "success": True,
+            "data": {
+                "subtotal": pricing["subtotal"],
+                "tax_info": {
+                    "name": pricing["tax_name"],
+                    "rate": pricing["tax_rate"],
+                    "amount": pricing["tax_amount"]
+                },
+                "total": pricing["total"]
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error calculating tax: {str(e)}")
+
+
+@router.get("/tax-info/{store_id}")
+async def get_store_tax_info(store_id: str):
+    """
+    Get tax information for a store based on its country
+    """
+    try:
+        tax_info = await get_tax_info_for_store(store_id)
+        
+        return {
+            "success": True,
+            "data": {
+                "tax_name": tax_info["name"],
+                "tax_rate": tax_info["rate"],
+                "display": f"{tax_info['name']} ({tax_info['rate']}%)"
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving tax info: {str(e)}")
+
+
+# ================== END TAX CALCULATION ROUTES ==================

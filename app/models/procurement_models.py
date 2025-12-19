@@ -68,9 +68,10 @@ class Contract(BaseModel):
     address: Optional[str] = None
     pincode: Optional[str] = None
     business_type: Optional[str] = None
+    base_price: Optional[float] = None
     unit_price: Optional[float] = None
     gst_number: Optional[str] = None
-    tax: Optional[float] = None
+    vendor_tax: Optional[float] = None
     product_name: Optional[str] = None
     quantity: Optional[int] = None
     unit: Optional[str] = None
@@ -98,9 +99,10 @@ class ContractUpdate(BaseModel):
     address: Optional[str]= None
     pincode: Optional[str]= None
     business_type: Optional[str]= None
+    base_price: Optional[float]= None
     unit_price: Optional[float]= None
     gst_number: Optional[str]= None
-    tax: Optional[float]= None
+    vendor_tax: Optional[float]= None
     type: Optional[str]= None  # "order" or "preorder"
     product_name: Optional[str]= None
     quantity: Optional[int]= None
@@ -180,12 +182,14 @@ class PurchaseOrderResponse(BaseModel):
     delivery_date: str
     received_status: str
     validation_status: str
-    amount: Optional[int] = None
+    amount: Optional[float] = None
     product_name: Optional[str] = None
     category: Optional[str] = None
     unit: Optional[str] = None
     quantity: Optional[int] = None
+    base_price: Optional[float] = None
     unit_price: Optional[float] = None
+    vendor_tax: Optional[float] = 0
     return_conditions: Optional[List[str]] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -198,14 +202,16 @@ class PurchaseOrderDetailResponse(BaseModel):
     validation_status: str
     received_status: str
     product_name: Optional[str] = None
-    amount: Optional[int] = None
+    amount: Optional[float] = None
     category: Optional[str] = None
     sub_category: Optional[str] = None
     unit: Optional[str] = None
     quantity_unit: Optional[str] = None
     expected_quantity: Optional[int] = None
     received_quantity: Optional[int] = None
+    base_price: Optional[float] = None
     unit_price: Optional[float] = None
+    vendor_tax: Optional[float] = 0
     is_product_damaged: Optional[bool] = None
     returnable: Optional[bool] = None
     return_conditions: Optional[List[str]] = []

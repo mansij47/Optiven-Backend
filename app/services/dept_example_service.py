@@ -34,7 +34,6 @@ async def login(email: str, password: str):
     role= admin.get("role") if admin else None
     if not admin or not verify_password(password, admin["password"]):
         return None
-
     token = create_access_token({
         "email": email,
         "id":admin["id"],
@@ -165,10 +164,11 @@ async def fetch_user(request):
 
 async def login(email: str, password: str):
     admin = await db.Users.find_one({"email": email})
+
     role= admin.get("role") if admin else None
+
     if not admin or not verify_password(password, admin["password"]):
         return None
-
     token = create_access_token({
         "email": email,
         "id": str(admin["_id"]),

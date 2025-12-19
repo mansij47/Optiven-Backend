@@ -2,6 +2,11 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional
 from datetime import datetime
 
+class SellOrderPayload(BaseModel):
+    quantity: int
+    price: float
+    tax: float
+
 class Product(BaseModel):
     org_id: str
     store_id: str

@@ -14,15 +14,17 @@ async def get_dashboard_data(store_id: str):
     total_items = await inventory_collection.count_documents(store_filter)
 
     # ---------- 2. Low Stock Items ----------
+    # Count products with "Low Stock" status (includes legacy "running-out" for backward compatibility)
     low_stock_items = await inventory_collection.count_documents({
         **store_filter,
-        "quantity": {"$lt": 10, "$gt": 0}
+        "status": {"$in": ["Low Stock", "running-out"]}
     })
 
     # ---------- 3. Out of Stock Items ----------
+    # Count products with "Stock-out" status
     out_of_stock_items = await inventory_collection.count_documents({
         **store_filter,
-        "quantity": {"$lte": 0}
+        "status": "Stock-out"
     })
 
     # ---------- 5. Total Revenue ----------

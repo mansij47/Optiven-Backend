@@ -51,8 +51,9 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
             {"_id": duplicate_contract["_id"]},
             {"$set": {
                 "quantity": new_quantity,
+                "base_price": contract_data.base_price,
                 "unit_price": contract_data.unit_price,
-                "tax": contract_data.tax,
+                "vendor_tax": contract_data.vendor_tax,
                 "date_of_delivery": contract_data.date_of_delivery,
                 "warranty_tenure": contract_data.warranty_tenure,
                 "warranty_unit": contract_data.warranty_unit,
@@ -161,7 +162,7 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
             purchase_order = {
                 "order_id": f"PO{contract_id[-4:]}",
                 "contract_id": contract_id,
-                "vendor_id": contract.get("vendor_id"),  # Add vendor_id from contract
+                "vendor_id": contract.get("vendor_id"),
                 "vendor_name": contract["vendor_name"],
                 "delivery_date": contract["date_of_delivery"],
                 "validation_status": "Pending",
@@ -181,11 +182,13 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
                 "category": contract.get("category", "misc"),
                 "sub_category": contract.get("sub_category", "misc"),
                 "quantity": contract.get("quantity"),
+                "base_price": contract.get("base_price", contract.get("unit_price")),
                 "unit_price": contract.get("unit_price"),
+                "vendor_tax": contract.get("vendor_tax", contract.get("tax", 0)),
                 "is_damage_returnable": contract.get("is_damage_returnable"),
                 "warranty_tenure": contract.get("warranty_tenure"),
                 "warranty_unit": contract.get("warranty_unit"),
-                "type": contract.get("type", "order"),  # ✅ Propagate type from contract
+                "type": contract.get("type", "order"),
 
             }
             await purchase_orders_collection.insert_one(purchase_order)

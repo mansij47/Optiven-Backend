@@ -9,7 +9,127 @@ users_collection = db.Users
 sales_orders_collection = db.SalesOrders  # For profit calculation
 
 
-# 🔹 NEW: Sync Profit Orders from SalesOrders to ProfitOrders Collection
+# 🔹 NEW: Sync a single sold order to ProfitOrders (for real-time updates)
+async def sync_single_order_to_profit(order_id: str, store_id: str):
+    """
+    Syncs a single sold order to ProfitOrders collection in real-time.
+    Called immediately after an order is marked as sold.
+    """
+    # Fetch the specific sold order
+    order = await db.SalesOrders.find_one({
+        "order_id": order_id,
+        "store_id": store_id,
+        "order_status": "1"  # Only sold orders
+    })
+    
+    if not order:
+        print(f"Order {order_id} not found or not sold yet")
+        return {"synced_count": 0, "updated_count": 0}
+    
+    synced_count = 0
+    updated_count = 0
+    
+    order_date = order.get("order_date")
+    sold_at = order.get("sold_at")
+    sales_order_mongo_id = str(order.get("_id"))
+    
+    # Process each product in the order
+    for product in order.get("products", []):
+        product_id = product.get("product_id")
+        product_name = product.get("product_name")
+        category = product.get("category")
+        quantity_sold = int(product.get("order_quantity", 0))
+        item_ids = product.get("item_ids", [])
+        unit = product.get("unit", "")
+        
+        # Calculate unit_price and selling_price from items
+        if item_ids:
+            total_unit_price = 0.0
+            total_selling_price = 0.0
+            valid_items = 0
+            
+            for item_id in item_ids:
+                item = await db.ProductItems.find_one({
+                    "item_id": item_id,
+                    "product_id": product_id,
+                    "store_id": store_id
+                })
+                
+                if item:
+                    try:
+                        item_unit_price = float(item.get("unit_price", 0))
+                        item_selling_price = float(item.get("selling_price", 0))
+                        
+                        # If selling_price doesn't exist, calculate it
+                        if item_selling_price == 0 and item_unit_price > 0:
+                            item_selling_price = item_unit_price + 50
+                        
+                        total_unit_price += item_unit_price
+                        total_selling_price += item_selling_price
+                        valid_items += 1
+                    except (ValueError, TypeError):
+                        continue
+            
+            # Calculate average prices
+            if valid_items > 0:
+                avg_unit_price = total_unit_price / valid_items
+                avg_selling_price = total_selling_price / valid_items
+            else:
+                avg_unit_price = 0.0
+                avg_selling_price = 0.0
+        else:
+            # Fallback to product-level prices if no items
+            avg_unit_price = float(product.get("unit_price", 0))
+            avg_selling_price = avg_unit_price + 50 if avg_unit_price > 0 else 0.0
+        
+        # Calculate profit
+        profit_per_item = avg_selling_price - avg_unit_price
+        total_profit = profit_per_item * quantity_sold
+        
+        # Create profit order document
+        profit_order_data = {
+            "order_id": order_id,
+            "sales_order_id": sales_order_mongo_id,
+            "product_id": product_id,
+            "product_name": product_name,
+            "category": category,
+            "date_recorded": sold_at.strftime("%Y-%m-%d") if sold_at else order_date,
+            "quantity_sold": quantity_sold,
+            "unit": unit,
+            "unit_price": round(avg_unit_price, 2),
+            "selling_price": round(avg_selling_price, 2),
+            "profit_amount": round(total_profit, 2),
+            "store_id": store_id,
+            "updated_at": datetime.utcnow()
+        }
+        
+        # Check if this profit order already exists
+        existing = await db.ProfitOrders.find_one({
+            "order_id": order_id,
+            "product_id": product_id,
+            "store_id": store_id
+        })
+        
+        if existing:
+            # Update existing record
+            await db.ProfitOrders.update_one(
+                {"_id": existing["_id"]},
+                {"$set": profit_order_data}
+            )
+            updated_count += 1
+        else:
+            # Insert new record
+            profit_order_data["created_at"] = datetime.utcnow()
+            await db.ProfitOrders.insert_one(profit_order_data)
+            synced_count += 1
+    
+    return {
+        "synced_count": synced_count,
+        "updated_count": updated_count
+    }
+
+
+# 🔹 Sync All Profit Orders from SalesOrders to ProfitOrders Collection
 async def sync_profit_orders_from_sales(store_id: str):
     """
     Syncs sold SalesOrders (order_status="1") to ProfitOrders collection.

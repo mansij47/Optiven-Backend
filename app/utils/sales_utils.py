@@ -1,6 +1,7 @@
 import re
 from fastapi import HTTPException
 from app.db import db  # Adjust import if your db connection is elsewhere
+from app.utils.tax_utils import calculate_tax_amount, calculate_product_total_with_tax
 
 async def generate_order_id():
     last_order = await db.SalesOrders.find_one(
@@ -20,9 +21,10 @@ async def generate_order_id():
     return f"ORD{new_number:03d}"
 
 def build_product_detail(inventory_item: dict, product_id: str, unit_price: float,
-                         product_tax: float, order_quantity: int, inventory_quantity: int, consumer_return_conditions: list):
+                         product_tax: float, order_quantity: int, inventory_quantity: int, 
+                         consumer_return_conditions: list, selling_price: float = None):
     line_total = unit_price * order_quantity
-    tax = product_tax * order_quantity
+    tax = calculate_tax_amount(unit_price, product_tax, order_quantity)
 
     # Set default return conditions if none provided
     default_conditions = ["Wrong product", "Damaged on arrival", "Quality issues"]
@@ -32,6 +34,7 @@ def build_product_detail(inventory_item: dict, product_id: str, unit_price: floa
         "product_id": product_id,
         "product_name": inventory_item["product_name"],
         "unit_price": unit_price,
+        "selling_price": selling_price ,  # Store customer-paid price
         "category": inventory_item["category"],
         "order_quantity": order_quantity,
         "inventory_quantity": inventory_quantity,
@@ -101,37 +104,49 @@ async def fetch_inventory_details(product_id: str, store_id: str):
     if not inventory_item:
         raise HTTPException(status_code=404, detail=f"Product with ID {product_id} not found in inventory.")
 
-    # ✅ Calculate average price from ProductItems (source of truth for pricing)
+    # ✅ Calculate average selling_price from ProductItems (source of truth for customer pricing)
     items_cursor = db.ProductItems.find({
         "product_id": product_id,
         "store_id": store_id,
         "status": "available"
-    }, {"unit_price": 1, "_id": 0})
+    }, {"unit_price": 1, "selling_price": 1, "_id": 0})
     
     items = await items_cursor.to_list(length=None)
     
     unit_price = 0.0
+    average_selling_price = 0.0
+    
     if items:
-        total_price = 0.0
+        total_unit_price = 0.0
+        total_selling_price = 0.0
         valid_count = 0
         
         for item in items:
             try:
+                # Get unit_price (cost price)
                 price_value = item.get("unit_price", 0)
-                # Convert string to float if needed
                 if isinstance(price_value, str):
                     price_value = float(price_value) if price_value and price_value != "0" else 0.0
                 else:
                     price_value = float(price_value)
                 
+                # Get selling_price (what customer pays)
+                selling_value = item.get("selling_price", 0)
+                if isinstance(selling_value, str):
+                    selling_value = float(selling_value) if selling_value and selling_value != "0" else 0.0
+                else:
+                    selling_value = float(selling_value)
+                
                 if price_value > 0:
-                    total_price += price_value
+                    total_unit_price += price_value
+                    total_selling_price += selling_value if selling_value > 0 else price_value
                     valid_count += 1
             except (ValueError, TypeError):
                 continue
         
         if valid_count > 0:
-            unit_price = round(total_price / valid_count, 2)
+            unit_price = round(total_unit_price / valid_count, 2)
+            average_selling_price = round(total_selling_price / valid_count, 2)
     
     # If still 0, try Inventory table as fallback
     if unit_price == 0:
@@ -164,6 +179,7 @@ async def fetch_inventory_details(product_id: str, store_id: str):
     return {
         "inventory_item": inventory_item,
         "unit_price": unit_price,
+        "average_selling_price": average_selling_price,
         "product_tax": product_tax,
         "inventory_quantity": inventory_quantity,
         "consumer_return_conditions": consumer_return_conditions
@@ -195,7 +211,9 @@ async def enrich_products(products: list, return_quantity: int, reason: str, ord
     for product in products:
         product_id = product.get("product_id")
         product_name = product.get("product_name")
-        unit_price = product.get("unit_price", 0.0)
+        # ✅ Use selling_price (what customer paid) instead of unit_price (cost price)
+        selling_price = product.get("selling_price", 0.0)
+        unit_price = product.get("unit_price", 0.0)  # Keep for reference
         tax = product.get("tax", 0.0)
 
         if not product_id or not product_name:
@@ -214,17 +232,20 @@ async def enrich_products(products: list, return_quantity: int, reason: str, ord
             })
             continue
 
-        is_customer_returnable = inventory.get("is_consumer_returnable", False)
-        consumer_conditions = inventory.get("consumer_return_conditions", [])
-
-        print(f"Checking {product_id}: is_customer_returnable={is_customer_returnable}, conditions={consumer_conditions}, reason={reason}")
-
-        # Get return conditions from the product itself if available, otherwise from inventory
-        product_return_conditions = product.get("consumer_return_conditions", consumer_conditions)
+        # ✅ Use return conditions from the SOLD ORDER (what was valid at time of sale)
+        # NOT from current Inventory (which may have changed)
+        product_return_conditions = product.get("consumer_return_conditions", [])
+        is_customer_returnable = product.get("is_consumer_returnable", False)
         
-        print(f"Return conditions for {product_id}: {product_return_conditions}, Reason: {reason}")
+        # Only fallback to inventory if sold order doesn't have the data
+        if not product_return_conditions:
+            product_return_conditions = inventory.get("consumer_return_conditions", [])
+        if not is_customer_returnable:
+            is_customer_returnable = inventory.get("is_consumer_returnable", False)
 
-        # Validate return eligibility
+        print(f"Checking {product_id}: is_customer_returnable={is_customer_returnable}, conditions={product_return_conditions}, reason={reason}")
+
+        # Validate return eligibility based on conditions from sold order
         if not product_return_conditions:
             skipped_products.append({
                 "product_id": product_id,
@@ -238,15 +259,16 @@ async def enrich_products(products: list, return_quantity: int, reason: str, ord
                 "reason": f"Reason '{reason}' not in return conditions: {product_return_conditions}"
             })
             continue
-
+        
         try:
             return_quantity = int(return_quantity)
+            selling_price = float(selling_price) if selling_price else float(unit_price)  # Fallback to unit_price if no selling_price
             unit_price = float(unit_price)
             tax = float(tax)
         except (ValueError, TypeError):
             skipped_products.append({
                 "product_id": product_id,
-                "reason": "Invalid return_quantity, unit_price or tax format"
+                "reason": "Invalid return_quantity, selling_price or tax format"
             })
             continue
 
@@ -264,6 +286,9 @@ async def enrich_products(products: list, return_quantity: int, reason: str, ord
                 }, {"_id": 0})
                 
                 if item:
+                    # ✅ Get selling_price from the actual sold item (price at time of sale)
+                    item_selling_price = item.get("selling_price", selling_price)
+                    
                     items_details.append({
                         "item_id": item_id,
                         "vendor_id": item.get("vendor_id"),
@@ -272,18 +297,21 @@ async def enrich_products(products: list, return_quantity: int, reason: str, ord
                         "purchase_date": item.get("purchase_date"),
                         "delivery_date": item.get("delivery_date"),
                         "unit_price": item.get("unit_price", unit_price),
+                        "selling_price": item_selling_price,  # ✅ Actual selling price
                         "batch_number": item.get("batch_number"),
                         "serial_number": item.get("serial_number"),
                         "has_warranty": item.get("has_warranty", False),
                         "warranty_tenure": item.get("warranty_tenure", 0),
                         "warranty_unit": item.get("warranty_unit", "months"),
                         "is_consumer_returnable": item.get("is_consumer_returnable", is_customer_returnable),
-                        "consumer_return_conditions": item.get("consumer_return_conditions", consumer_conditions),
+                        "consumer_return_conditions": item.get("consumer_return_conditions", product_return_conditions),
                         "is_seller_returnable": item.get("is_seller_returnable", inventory.get("is_seller_returnable", False)),
                         "seller_return_conditions": item.get("seller_return_conditions", inventory.get("seller_return_conditions", []))
                     })
 
-        item_amount = (unit_price * return_quantity) - (tax * return_quantity)
+        # ✅ Calculate tax-inclusive return amount using SELLING_PRICE (what customer paid)
+        # Returns: quantity × (selling_price + tax_amount_per_unit)
+        item_amount = calculate_product_total_with_tax(selling_price, tax, return_quantity)
         total_amount += item_amount
 
         # Build enriched product with item-level details
@@ -294,13 +322,14 @@ async def enrich_products(products: list, return_quantity: int, reason: str, ord
             "sub_category": inventory.get("sub_category", product.get("sub_category")),
             "unit": inventory.get("unit", product.get("unit", "pcs")),
             "return_quantity": return_quantity,
-            "unit_price": unit_price,
+            "unit_price": unit_price,  # Cost price (for reference)
+            "selling_price": selling_price,  # ✅ Actual selling price (what customer paid)
             "tax": tax,
             "total_price": item_amount,
             "return_amount": str(item_amount),
             "original_quantity": product.get("order_quantity", return_quantity),
             "is_customer_returnable": is_customer_returnable,
-            "consumer_return_conditions": consumer_conditions,
+            "consumer_return_conditions": product_return_conditions,  # ✅ Use conditions from sold order
             "is_seller_returnable": inventory.get("is_seller_returnable", False),
             "seller_return_conditions": inventory.get("seller_return_conditions", []),
             "return_reason": reason

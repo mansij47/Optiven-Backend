@@ -2,64 +2,12 @@ from typing import Optional
 from app.db import db
 from app.models.sales_model import ProductDetails, SalesOrderDetails, SalesProductItem
 from app.services.sales_add_raise_services import fetch_inventory_details
+from app.utils.tax_utils import calculate_product_total_with_tax
 from fastapi import HTTPException
 from app.utils.sales_utils import build_product_detail, parse_return_status, parse_status_string
 from bson.son import SON
 from datetime import datetime
-# async def get_all_sales_orders(store_id: str):
-#     orders = await db.SalesOrders.find(
-#         {"order_status": "0", "store_id": store_id},
-#         {"_id": 0}
-#     ).to_list(length=None)
 
-#     for order in orders:
-#         updated_products = []
-
-#         for product in order.get("products", []):
-#             product_id = product.get("product_id")
-#             ordered_quantity = int(product.get("order_quantity", 0))
-#             inventory_item = await db.Inventory.find_one({
-#                 "store_id": store_id,
-#                 "product_id": product_id
-#             })
-
-#             try:
-#                 inventory_quantity = int(inventory_item.get("quantity", 0)) if inventory_item else 0
-#             except (ValueError, TypeError):
-#                 inventory_quantity = 0
-
-#             # Compare and determine product_status
-#             product_status = "Stock-out" if inventory_quantity < ordered_quantity else "Stock-in"
-
-#             # Add product_status to product
-#             product["product_status"] = product_status
-#             updated_products.append(product)
-
-#         # Update products list
-#         order["products"] = updated_products
-
-#         # Convert status field
-#         order["status"] = parse_status_string(order.get("status", "0"))
-
-#         # Remove order_status field if present
-#         if "order_status" in order:
-#             del order["order_status"]
-
-#     return orders
-
-# async def get_all_sold_orders(store_id: str):
-#     orders = await db.SalesOrders.find(
-#         {"store_id": store_id, "order_status": "1"},
-#         {"_id": 0}
-#     ).to_list(length=None)
-
-#     for order in orders:
-#         # Convert order_status to status text
-#         order["status"] = parse_status_string(order["order_status"])
-#         # Remove raw order_status field from final output
-#         order.pop("order_status", None)
-
-#     return orders
 
 
 # ✅ Helper function to calculate average selling_price from available items
@@ -109,19 +57,9 @@ async def calculate_average_selling_price_from_items(product_id: str, store_id: 
 def calculate_product_total_price(unit_price: float, tax: float, quantity: int) -> float:
     """
     Calculate total price for a product: quantity * (unit_price + tax_amount)
-    Tax amount = (unit_price * tax / 100)
-    Same logic as frontend Add Order page
+    Uses centralized tax calculation utility from tax_utils
     """
-    try:
-        unit_price = float(unit_price) if unit_price else 0.0
-        tax = float(tax) if tax else 0.0
-        quantity = int(quantity) if quantity else 0
-        
-        tax_amount = (unit_price * tax) / 100
-        total = quantity * (unit_price + tax_amount)
-        return round(total, 2)
-    except (ValueError, TypeError):
-        return 0.0
+    return calculate_product_total_with_tax(unit_price, tax, quantity)
 
 
 async def get_all_sales_orders(store_id: str):
@@ -172,9 +110,9 @@ async def get_all_sales_orders(store_id: str):
         total_order_price = 0.0
         for product in updated_products:
             unit_price = float(product.get("unit_price", 0))
-            tax = float(product.get("tax", 0))
+            # tax = float(product.get("tax", 0))
             quantity = int(product.get("order_quantity", 0))
-            product_total = calculate_product_total_price(unit_price, tax, quantity)
+            product_total =unit_price * quantity
             total_order_price += product_total
         
         order["total_order_price"] = round(total_order_price, 2)
@@ -248,12 +186,17 @@ async def fetch_order_and_validate(order_id: str, store_id: str):
         raise HTTPException(status_code=404, detail="Order not found or already sold.")
     return order
 
-async def update_inventory_for_order(order, store_id: str):
+async def update_inventory_for_order(order, store_id: str, tax: float = None):
     sold_items_map = {}  # Track which items were sold for each product
     
     for product in order.get("products", []):
         product_id = product.get("product_id")
         order_quantity = int(product.get("order_quantity", 0))  # Correct field
+        
+        # Skip if no product_id
+        if not product_id:
+            print(f"⚠️  Skipping product with no product_id: {product.get('product_name')}")
+            continue
         
         # ✅ Get selling_price from order's product (custom price set by sales)
         # If not provided, fallback to product's average_selling_price
@@ -278,12 +221,13 @@ async def update_inventory_for_order(order, store_id: str):
 
         if len(available_items) < order_quantity:
             # Not enough items available
+            print(f"⚠️  Not enough items for {product_id} - need {order_quantity}, have {len(available_items)}")
             continue
 
         # Store the item IDs that were sold for this product
         sold_item_ids = []
         
-        # ✅ Mark each item as sold with actual selling_price from order
+        # ✅ Mark each item as sold with actual selling_price from order and Tax (sales GST)
         for item in available_items:
             item_id = item["item_id"]
             sold_item_ids.append(item_id)
@@ -299,6 +243,10 @@ async def update_inventory_for_order(order, store_id: str):
                     "sold_at": datetime.utcnow()
                 }
             }
+            
+            # ✅ Update Tax field (sales GST) if provided from popup
+            if tax is not None:
+                update_data["$set"]["Tax"] = tax
             
             # If item has previous sale history (was returned), archive it
             if item.get("sold_order_id") and item.get("sold_order_id") != order.get("order_id"):
@@ -353,15 +301,29 @@ async def mark_order_status_as_sold(order_id: str, store_id: str):
     )
     return result.modified_count
 
-async def mark_order_as_sold(order_id: str, store_id: str):
+async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None, price: float = None, tax: float = None):
     order = await fetch_order_and_validate(order_id, store_id)
-    sold_items_map = await update_inventory_for_order(order, store_id)
+    
+    # ✅ If quantity is provided from popup, update the order's quantity before processing
+    if quantity is not None:
+        for product in order.get("products", []):
+            product["order_quantity"] = quantity
+    
+    sold_items_map = await update_inventory_for_order(order, store_id, tax=tax)
     
     # Update the order products with item_ids information
     updated_products = []
     for product in order.get("products", []):
         product_id = product.get("product_id")
         product_copy = product.copy()
+        
+        # Update with edited values if provided
+        if quantity is not None:
+            product_copy["order_quantity"] = quantity
+        if price is not None:
+            product_copy["unit_price"] = price
+        if tax is not None:
+            product_copy["tax"] = tax
         
         # Add item_ids array (handles both single and multiple items)
         if product_id in sold_items_map:
@@ -387,13 +349,14 @@ async def mark_order_as_sold(order_id: str, store_id: str):
         }
     )
     
-    # \ud83c\udd95 AUTO-SYNC: Add this sold order to ProfitOrders collection
+    # ✅ AUTO-SYNC: Add this sold order to ProfitOrders collection (real-time)
     try:
         from app.services import admin_profitOrders_service
-        await admin_profitOrders_service.sync_profit_orders_from_sales(store_id)
+        result = await admin_profitOrders_service.sync_single_order_to_profit(order_id, store_id)
+        print(f"✅ Profit sync: {result['synced_count']} new, {result['updated_count']} updated for order {order_id}")
     except Exception as e:
         # Log error but don't fail the main operation
-        print(f"Warning: Failed to sync profit orders: {str(e)}")
+        print(f"⚠️ Warning: Failed to sync profit for order {order_id}: {str(e)}")
     
     return 1  # Return success count
 
@@ -431,7 +394,9 @@ async def rebuild_products_list(original_products: list, updated_products_input:
             unit_price=inventory_data["unit_price"],
             product_tax=inventory_data["product_tax"],
             order_quantity=new_quantity,
-            inventory_quantity=inventory_data["inventory_quantity"]
+            inventory_quantity=inventory_data["inventory_quantity"],
+            consumer_return_conditions=inventory_data["consumer_return_conditions"],
+            selling_price=inventory_data["average_selling_price"]  # Pass customer-paid price
         )
 
         subtotal += total_with_tax
