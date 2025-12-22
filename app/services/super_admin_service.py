@@ -182,7 +182,7 @@ async def get_stores(
             raise HTTPException(400, "Invalid date_to format")
 
     # Debug: Print the query to see what's being searched
-    print(f"MongoDB Query: {query}")
+    # print(f"MongoDB Query: {query}")
 
     # Pagination
     skip = (page - 1) * page_size
@@ -191,41 +191,14 @@ async def get_stores(
     # Add sorting for consistent results
     stores = await db.Stores.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(page_size).to_list(page_size)
     
-    # Debug: Print results count
-    print(f"Total documents found: {total}")
-    print(f"Documents returned: {len(stores)}")
+   
 
     return StoresResponse(
         data=stores,
         total=total,
         page=page,
         page_size=page_size
-    )# async def create_store(data: CreateStoreModel) -> str:
-#     doc = data.model_dump()
-#     if await db.Stores.find_one({"store_id": doc["store_id"]}):
-#         doc["store_id"] = await _next_id(db.Stores, "store_id", "ST")
-#     now = datetime.utcnow().isoformat()
-#     doc["created_at"] = now
-#     doc["updated_at"] = now
-#     result = await db.Stores.insert_one(doc)
-#     store_id = doc["store_id"]
-
-#     # Adding to users collection
-#     user_doc = {
-#         "id": doc.get("admin_id"),
-#         "org_id": doc.get("org_id"),
-#         "store_id": [store_id],
-#         "password": hash_password(doc.get("password", "")),
-#         "email": doc.get("email"),
-#         "role": "admin",
-#         "name": doc.get("admin_name"),
-#         "joining_date": now,
-#         "termination_date": now,
-#         "status": 0  # 0: active, 1: disabled, 2: draft
-#     }
-#     await db.Users.insert_one(user_doc)
-#     # print("User document to be inserted:", user_doc)
-#     return store_id
+    )
 
 async def create_store(data: CreateStoreModel, send_email):
     doc = data.model_dump()

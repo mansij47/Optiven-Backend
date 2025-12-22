@@ -2,6 +2,7 @@ from typing import Optional
 from fastapi import HTTPException
 from app.db import db
 import re
+from app.utils.tax_utils import calculate_tax_amount
 
 
 async def generate_request_id():
@@ -38,7 +39,7 @@ async def generate_order_id(): # type: ignore
 def build_product_detail(inventory_item: dict, product_id: str, unit_price: float, # type: ignore
                          product_tax: float, order_quantity: int, inventory_quantity: int):
     line_total = unit_price * order_quantity
-    tax = product_tax * order_quantity
+    tax = calculate_tax_amount(unit_price, product_tax, order_quantity)
 
     product_detail = {
         "product_id": product_id,

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request, Query
-from app.models.sales_model import EditOrderModel, ProductDetails, ReturnOrderRequest, ReturnedOrderModel, SalesOrderDetails, SalesOrderModel, LoginModel, RequestOrderModel, SendToProcurement
+from app.models.sales_model import EditOrderModel, ProductDetails, ReturnOrderRequest, ReturnedOrderModel, SalesOrderDetails, SalesOrderModel, LoginModel, RequestOrderModel, SendToProcurement, SellOrderPayload
 from app.services import sales_get_update_services
 from typing import Any, Optional
 from app.services import sales_add_raise_services
@@ -88,7 +88,7 @@ async def edit_order(order_id: str, order: EditOrderModel, request: Request):
 
 #order sold successfully notification
 @router.put("/orders/received/{order_id}/sell") 
-async def mark_order_as_sold(order_id: str, request: Request):
+async def mark_order_as_sold(order_id: str, payload: SellOrderPayload, request: Request):
     user = request.state.user
 
     if not user or user.get("role") != "sales":
@@ -98,7 +98,13 @@ async def mark_order_as_sold(order_id: str, request: Request):
     if not store_id:
         raise HTTPException(status_code=400, detail="Store ID missing in token.")
 
-    updated_count = await sales_get_update_services.mark_order_as_sold(order_id, store_id)
+    updated_count = await sales_get_update_services.mark_order_as_sold(
+        order_id, 
+        store_id,
+        quantity=payload.quantity,
+        price=payload.price,
+        tax=payload.tax
+    )
 
     if updated_count == 0:
         raise HTTPException(status_code=404, detail="Order not found or already sold.")
@@ -184,7 +190,7 @@ async def fetch_all_products_route(request: Request):
         raise HTTPException(status_code=400, detail="Store ID missing in token.")
 
     response = await sales_get_update_services.get_all_products(store_id)
-    # print("Fetched products:", response)
+   
     return {"products": response}
 
 #order requested successfully notification 

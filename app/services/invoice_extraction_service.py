@@ -522,18 +522,18 @@ async def extract_invoice_data(
         
         # Validate with LLM
         if use_llm:
-            print("\n🤖 Validating with LLM...")
+            print("\n Validating with LLM...")
             vendor_data = validate_and_enhance(vendor_data, full_text, "vendor")
-            print("✅ LLM validation complete")
+            print(" LLM validation complete")
         
         # Clean data before creating model (handle 'null' strings, validate types)
         vendor_data = clean_extracted_data(vendor_data)
         
         response_data.vendor = VendorModel(**vendor_data)
-        print("\n✅ Vendor data extraction complete!")
+        print("\n Vendor data extraction complete!")
     
     if extraction_type in [ExtractionType.ALL, ExtractionType.CUSTOMER]:
-        print("📋 Extracting customer data...")
+        print(" Extracting customer data...")
         customer_data = extract_customer_fields(full_text)
         
         # Validate with LLM
@@ -546,7 +546,7 @@ async def extract_invoice_data(
         response_data.customer = CustomerModel(**customer_data)
     
     if extraction_type in [ExtractionType.ALL, ExtractionType.DATES]:
-        print("📋 Extracting dates...")
+        print(" Extracting dates...")
         dates_data = extract_dates(full_text)
         
         # Validate with LLM
@@ -559,7 +559,7 @@ async def extract_invoice_data(
         response_data.dates = DateModel(**dates_data)
     
     if extraction_type in [ExtractionType.ALL, ExtractionType.FINANCIAL]:
-        print("📋 Extracting financial data...")
+        print(" Extracting financial data...")
         financial_data = extract_financial_fields(full_text)
         
         # Validate with LLM
@@ -572,7 +572,7 @@ async def extract_invoice_data(
         response_data.financial = FinancialModel(**financial_data)
     
     if extraction_type in [ExtractionType.ALL, ExtractionType.PAYMENT]:
-        print("📋 Extracting payment info...")
+        print(" Extracting payment info...")
         payment_data = extract_payment_fields(full_text)
         
         # Validate with LLM
@@ -585,7 +585,7 @@ async def extract_invoice_data(
         response_data.payment = PaymentModel(**payment_data)
     
     if extraction_type in [ExtractionType.ALL, ExtractionType.ITEMS]:
-        print("📋 Extracting line items...")
+        print(" Extracting line items...")
         # Items extraction from tables (basic)
         items_list = []
         for table_info in tables:

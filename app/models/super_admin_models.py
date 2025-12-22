@@ -84,6 +84,7 @@ class UpdateProfileModel(BaseModel):
     phone: Optional[str] = None
     bio: Optional[str] = None
     profile_image: Optional[str] = None
+    store_id: Optional[str] = None
 
 class ChangePasswordModel(BaseModel):
     old_password: str
@@ -186,6 +187,7 @@ class EditStoreModel(CreateStoreModel):
     gst_number: Optional[str] = None
     admin_id: Optional[str] = None
     address: Optional[AddressModel] = None
+    
 
 class StoreIdsModel(BaseModel):
     store_ids: List[str]

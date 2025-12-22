@@ -12,7 +12,7 @@ async def add_sales_order(order_data: dict, store_id: str):
     # Process products and detect preorder/stock-out condition
     final_products, subtotal, stock_out_or_preorder = await process_products(order_data.get("products", []), store_id)
 
-    # print(f"[DEBUG] Final products after processing: {final_products}")
+  
     # Fill order fields
     order_data["products"] = final_products
     order_data["total_order_price"] = round(subtotal, 2)
@@ -45,13 +45,13 @@ async def process_products(products: list, store_id: str):
     subtotal = 0.0
     stock_out_or_preorder = False
 
-    # print(f"[DEBUG] Incoming products to process: {products}")
+
     
     for prod in products:
         product_id = prod.get("product_id", "")
         order_quantity = prod["quantity"]
         
-        # print(f"[DEBUG] Processing product: product_id='{product_id}', product_name='{prod.get('product_name')}', quantity={order_quantity}")
+       
 
         # Check if product_id is empty (preorder case) - skip inventory lookup
         if not product_id or product_id.strip() == "":
@@ -91,7 +91,8 @@ async def process_products(products: list, store_id: str):
                 product_tax=inventory_data["product_tax"],
                 order_quantity=order_quantity,
                 inventory_quantity=inventory_data["inventory_quantity"],
-                consumer_return_conditions=inventory_data["consumer_return_conditions"]
+                consumer_return_conditions=inventory_data["consumer_return_conditions"],
+                selling_price=inventory_data["average_selling_price"]  # Pass customer-paid price
             )
 
             # Check inventory status and quantity
@@ -112,7 +113,6 @@ async def process_products(products: list, store_id: str):
             # Leave product_id empty - will be populated when inventory is created
             product_name = prod.get("product_name") or prod.get("name") or "Unknown"
             print(f"Product not in inventory, creating preorder: {prod}")
-            print(f"[DEBUG] Extracted product_name: {product_name}")
             
             product_detail = {
                 "product_id": "",  # Empty - will be updated when inventory is added
@@ -147,7 +147,7 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
     # ✅ Get order type from sales order (preorder or order)
     order_type = order.get("type", "order")  # Default to "order" if not specified
 
-    # print(f"[DEBUG] Preparing request for product: {product_name}, order_quantity: {order_quantity}")
+   
 
     # Try to find inventory item (may not exist for preorders) - case-insensitive
     inventory_item = await db.Inventory.find_one({
@@ -235,7 +235,7 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
 async def raise_request_order_service(order_id: str, estimate_date: str, org_id: str, store_id: str, requester: dict):
     request_data = await prepare_request_data(order_id, store_id, estimate_date, org_id, requester)
 
-    # print(f"[DEBUG] Request data prepared: {request_data}")
+
 
     # ---- Minimal hardening ----
     qty = int(request_data.get("quantity", 0))
@@ -245,7 +245,7 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
     if qty == 0:
         raise HTTPException(status_code=400, detail="Cannot raise request with 0 quantity. Product may already be in stock.")
 
-    print(f"[DEBUG] Quantity to increment: {qty}")
+    
 
     # Build a deterministic matcher (add category if present in your data)
     matcher = {
@@ -256,7 +256,6 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
     if request_data.get("category"):
         matcher["category"] = request_data["category"]
     
-    # print(f"[DEBUG] Matcher: {matcher}")
 
     # Prepare $setOnInsert with all fields from request_data except 'quantity' and fields in $set
     insert_snapshot = dict(request_data)  # shallow copy
@@ -298,8 +297,7 @@ async def fetch_sales_order(order_id: str, store_id: str):
     order_id = order_id.strip()
     store_id = store_id.strip()
     
-    # Debug print to check what we're searching for
-    print(f"Searching for order_id: '{order_id}' in store_id: '{store_id}'")
+    
     
     # Find the specific order for this store
     order = await db.SalesOrders.find_one({"order_id": order_id, "store_id": store_id}, {"_id": 0})
@@ -374,47 +372,9 @@ async def add_return(data: ReturnOrderRequest, store_id: str):
     return_doc = build_return_doc(data, order, enriched_products, total_amount, return_id, store_id)
     await db.ReturnOrders.insert_one(return_doc)
 
-    # ✅ ITEM-BASED APPROACH: Update order by removing returned item_ids
-    updated_products = []
-    should_delete = True  # Assume deletion unless a product still has items left
-
-    for product in products_list:
-        product_id = product.get("product_id")
-        order_qty = int(product.get("order_quantity", 0))
-        product_item_ids = product.get("item_ids", [])
-        
-        if order_qty <= 0:
-            continue
-        
-        # Find which items are being returned for this product
-        returned_item_ids = []
-        for enriched in enriched_products:
-            if enriched.get("product_id") == product_id:
-                returned_item_ids = enriched.get("item_ids", [])
-                break
-        
-        # Remove returned item_ids from product's item_ids list
-        remaining_item_ids = [item_id for item_id in product_item_ids if item_id not in returned_item_ids]
-        
-        if data.return_quantity >= order_qty or len(remaining_item_ids) == 0:
-            # The product is fully returned, skip adding it to updated_products
-            continue
-        else:
-            # Partial return, update the order_quantity and item_ids
-            product["order_quantity"] = len(remaining_item_ids)
-            product["item_ids"] = remaining_item_ids
-            updated_products.append(product)
-            should_delete = False  # Since at least one product still has remaining items
-
-    if should_delete:
-        # Delete the entire order
-        await db.SalesOrders.delete_one({"order_id": data.order_id, "store_id": store_id})
-    else:
-        # Update the order with the new product quantities and item_ids
-        await db.SalesOrders.update_one(
-            {"order_id": data.order_id, "store_id": store_id},
-            {"$set": {"products": updated_products}}
-        )
+    # ✅ DO NOT modify the sold order - maintain it as a historical record of the sale
+    # The return is tracked separately in ReturnOrders collection with item_ids
+    # This preserves accurate sales history and allows proper audit trails
 
     return {
         "message": "Return order added successfully",

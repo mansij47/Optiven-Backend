@@ -55,6 +55,7 @@ from app.models.store_model import StoreUpdate, StaffInput
 from app.services.store_service import update_store_by_token, add_staff_to_department, update_staff_in_department, delete_staff_from_department
 from app.services.dashboard_service import get_dashboard_data
 from app.models.dashboard_model import DashboardResponse
+from app.services.admin_store_service import delete_store_and_data, delete_store_data_only
 
 router = APIRouter()
 
@@ -234,7 +235,6 @@ async def fetch_all_products_route(request: Request):
     if not store_id:
         raise HTTPException(status_code=400, detail="Store ID missing in token.")
     response = await get_all_products(store_id)
-    # print("Fetched products:", response)
     return response
 
 
@@ -334,7 +334,6 @@ async def edit_product_patch(request: Request, product_id: str, data: Product.Pr
         raise HTTPException(status_code=400, detail="No fields provided for update.")
 
     response = await update_product_by_id(product_id, update_data)
-    print("Update response:", response)
     return response
 
 @router.put("/edit/product/{product_id}")
@@ -346,7 +345,7 @@ async def edit_product_put(request: Request, product_id: str, data: Product):
 
     update_data = data.model_dump(exclude_unset=True)
     response = await update_product_by_id(product_id, update_data)
-    print("Update response:", response)
+ 
     return response
 
 
@@ -840,6 +839,26 @@ async def export_profit_orders(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# Sync Profit Orders from SalesOrders
+@router.post("/sync_profitOrders", summary="Sync Profit Orders from SalesOrders")
+async def sync_profit_orders(request: Request):
+    """
+    Manually sync profit orders from SalesOrders collection to ProfitOrders collection.
+    This ensures all sold orders (status=1) are reflected in ProfitOrders for proper CRUD operations.
+    """
+    try:
+        user = request.state.user
+        
+        if user["role"] != "admin":
+            raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+        
+        store_id = user["store_id"]
+        
+        return await admin_profitOrders_service.sync_profit_orders_from_sales(store_id)
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ================== END PROFIT ORDERS ==================
 
 
@@ -853,3 +872,149 @@ async def fetch_old_products(store_id: str, month: int = None, older_than_months
 async def remove_old_products(store_id: str, month: int = None, older_than_months: int = None):
     result = await delete_old_products(store_id, month, older_than_months)
     return result
+
+
+# ================== TAX CALCULATION ROUTES ==================
+
+from app.utils.tax_utils import (
+    calculate_product_total_for_store,
+    get_tax_info_for_store,
+    calculate_tax_amount,
+    calculate_product_total_with_tax
+)
+from pydantic import BaseModel
+
+class TaxCalculationRequest(BaseModel):
+    store_id: str
+    unit_price: float
+    quantity: int
+    override_tax_rate: Optional[float] = None
+
+
+@router.post("/calculate-tax")
+async def calculate_product_tax(request: TaxCalculationRequest):
+    """
+    Calculate tax for a product with country-based tax rate
+    """
+    try:
+        pricing = await calculate_product_total_for_store(
+            store_id=request.store_id,
+            unit_price=request.unit_price,
+            quantity=request.quantity,
+            override_tax_rate=request.override_tax_rate
+        )
+        
+        return {
+            "success": True,
+            "data": {
+                "subtotal": pricing["subtotal"],
+                "tax_info": {
+                    "name": pricing["tax_name"],
+                    "rate": pricing["tax_rate"],
+                    "amount": pricing["tax_amount"]
+                },
+                "total": pricing["total"]
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error calculating tax: {str(e)}")
+
+
+@router.get("/tax-info/{store_id}")
+async def get_store_tax_info(store_id: str):
+    """
+    Get tax information for a store based on its country
+    """
+    try:
+        tax_info = await get_tax_info_for_store(store_id)
+        
+        return {
+            "success": True,
+            "data": {
+                "tax_name": tax_info["name"],
+                "tax_rate": tax_info["rate"],
+                "display": f"{tax_info['name']} ({tax_info['rate']}%)"
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving tax info: {str(e)}")
+
+
+# ================== STORE DELETION ==================
+
+@router.delete("/store/{store_id}/delete-data-only")
+async def delete_store_data(store_id: str, request: Request):
+    """
+    Delete all data from a store but keep the store itself.
+    
+    This endpoint wipes all data (users, products, orders, etc.) from the store
+    but preserves the store document in the database. The store can be used again
+    with fresh data.
+    
+    Deletes:
+    - All users in the store (except the current admin)
+    - All inventory and product items
+    - All sales orders (received, sold, requested)
+    - All profit and loss orders
+    - All return orders
+    - All notifications
+    - All vendors and contracts
+    
+    Preserves:
+    - Store document
+    - Current admin user
+    """
+    user = request.state.user
+    
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+    
+    # Verify admin belongs to the store (security check)
+    admin_store_id = user.get("store_id")
+    if admin_store_id != store_id:
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Access denied: You can only delete data from your own store"
+        )
+    
+    result = await delete_store_data_only(store_id, user)
+    return result
+
+
+@router.delete("/store/{store_id}/delete-all-data")
+async def delete_store_with_all_data(store_id: str, request: Request):
+    """
+    Delete a store and all associated data across all collections.
+    
+    WARNING: This is a permanent operation that cannot be undone!
+    
+    Deletes:
+    - Store document
+    - All users in the store
+    - All inventory and product items
+    - All sales orders (received, sold, requested)
+    - All profit and loss orders
+    - All return orders
+    - All notifications
+    - All vendors and contracts
+    - Any other store-specific data
+    """
+    user = request.state.user
+    
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+    
+    # Verify admin belongs to the store being deleted (security check)
+    admin_store_id = user.get("store_id")
+    if admin_store_id != store_id:
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Access denied: You can only delete your own store. Your store: {admin_store_id}, Requested: {store_id}"
+        )
+    
+    result = await delete_store_and_data(store_id, user)
+    return result
+
+# ================== END STORE DELETION ==================
+
+# ================== END TAX CALCULATION ROUTES ==================
