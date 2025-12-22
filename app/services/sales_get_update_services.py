@@ -189,20 +189,65 @@ async def fetch_order_and_validate(order_id: str, store_id: str):
 async def update_inventory_for_order(order, store_id: str, tax: float = None):
     sold_items_map = {}  # Track which items were sold for each product
     
+    # ✅ DEBUG: Log the order and store_id
+    print(f"🔍 [SELL] Processing order for store_id: {store_id}")
+    print(f"🔍 [SELL] Order products: {order.get('products', [])}")
+    
+    # ✅ VALIDATION PHASE: Check all products before making any changes
     for product in order.get("products", []):
         product_id = product.get("product_id")
-        order_quantity = int(product.get("order_quantity", 0))  # Correct field
+        product_name = product.get("product_name", "Unknown")
+        order_quantity = int(product.get("order_quantity", 0))
         
-        # Skip if no product_id
-        if not product_id:
-            print(f"⚠️  Skipping product with no product_id: {product.get('product_name')}")
-            continue
+        print(f"🔍 [SELL] Validating product: {product_name} (ID: {product_id}), Qty: {order_quantity}")
+        
+        if not product_id or product_id.strip() == "":
+            print(f"❌ [SELL] Product '{product_name}' has empty product_id - likely a preorder item")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Product '{product_name}' is missing product_id. Cannot process order. This might be a preorder item that hasn't been added to inventory yet."
+            )
+        
+        # Check if product exists in inventory
+        product_doc = await db.Inventory.find_one(
+            {"product_id": product_id, "store_id": store_id}
+        )
+        
+        if not product_doc:
+            print(f"❌ [SELL] Product not found in Inventory: product_id={product_id}, store_id={store_id}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Product '{product_name}' (ID: {product_id}) not found in store {store_id} inventory. Please add this product to your store's inventory first."
+            )
+        
+        # Check available quantity
+        available_count = await db.ProductItems.count_documents({
+            "product_id": product_id,
+            "store_id": store_id,
+            "status": "available"
+        })
+        
+        print(f"✅ [SELL] Found {available_count} available items for {product_name}")
+        
+        if available_count < order_quantity:
+            print(f"❌ [SELL] Insufficient stock: need {order_quantity}, have {available_count}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Insufficient stock for '{product_name}'. Required: {order_quantity}, Available: {available_count} in store {store_id}"
+            )
+    
+    # ✅ EXECUTION PHASE: All validations passed, now process the sale
+    print(f"✅ [SELL] Validation complete! Starting execution phase...")
+    
+    for product in order.get("products", []):
+        product_id = product.get("product_id")
+        order_quantity = int(product.get("order_quantity", 0))
+        
+        print(f"🔄 [SELL] Processing sale for: {product.get('product_name')} (ID: {product_id})")
         
         # ✅ Get selling_price from order's product (custom price set by sales)
-        # If not provided, fallback to product's average_selling_price
         order_selling_price = product.get("selling_price")
         
-        # If selling_price not in order, get from product level
         if not order_selling_price:
             product_doc = await db.Inventory.find_one(
                 {"product_id": product_id, "store_id": store_id},
@@ -210,7 +255,7 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
             )
             order_selling_price = product_doc.get("average_selling_price") if product_doc else None
 
-        # ✅ Find available items for this product (hierarchical structure)
+        # ✅ Find available items for this product
         available_items = await db.ProductItems.find(
             {
                 "product_id": product_id,
@@ -219,10 +264,7 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
             }
         ).limit(order_quantity).to_list(order_quantity)
 
-        if len(available_items) < order_quantity:
-            # Not enough items available
-            print(f"⚠️  Not enough items for {product_id} - need {order_quantity}, have {len(available_items)}")
-            continue
+        print(f"🔄 [SELL] Found {len(available_items)} items to mark as sold")
 
         # Store the item IDs that were sold for this product
         sold_item_ids = []
@@ -261,13 +303,27 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
                     }
                 }
             
-            await db.ProductItems.update_one(
-                {"item_id": item_id},
+            # ✅ Add store_id to update filter for safety
+            result = await db.ProductItems.update_one(
+                {"item_id": item_id, "store_id": store_id},
                 update_data
             )
+            print(f"✅ [SELL] Marked item {item_id} as sold - Modified count: {result.modified_count}")
+            
+            # Verify the update actually worked
+            verify_item = await db.ProductItems.find_one({"item_id": item_id, "store_id": store_id})
+            print(f"🔍 [SELL] Verified item {item_id} status after update: {verify_item.get('status')}, store: {verify_item.get('store_id')}")
 
         # Store the sold items for this product
         sold_items_map[product_id] = sold_item_ids
+        print(f"✅ [SELL] Sold {len(sold_item_ids)} items for product {product_id}")
+
+        # ✅ DEBUG: Check ALL items for this product to see actual statuses
+        all_items_debug = await db.ProductItems.find({
+            "product_id": product_id,
+            "store_id": store_id
+        }, {"item_id": 1, "status": 1, "_id": 0}).to_list(None)
+        print(f"🔍 [SELL] ALL items for {product_id} in {store_id}: {all_items_debug}")
 
         # ✅ Update product quantity (count remaining available items)
         remaining_items = await db.ProductItems.count_documents({
@@ -275,6 +331,8 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
             "store_id": store_id,
             "status": "available"
         })
+        
+        print(f"🔍 [SELL] Counting remaining items - product_id: {product_id}, store_id: {store_id}, remaining: {remaining_items}")
 
         await db.Inventory.update_one(
             {"product_id": product_id, "store_id": store_id},
@@ -285,6 +343,10 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
                 }
             }
         )
+        print(f"✅ [SELL] Updated inventory quantity to {remaining_items} for product {product_id}")
+    
+    print(f"✅ [SELL] Execution phase complete! Sold items: {sold_items_map}")        
+        
     
     return sold_items_map
 

@@ -55,6 +55,7 @@ from app.models.store_model import StoreUpdate, StaffInput
 from app.services.store_service import update_store_by_token, add_staff_to_department, update_staff_in_department, delete_staff_from_department
 from app.services.dashboard_service import get_dashboard_data
 from app.models.dashboard_model import DashboardResponse
+from app.services.admin_store_service import delete_store_and_data, delete_store_data_only
 
 router = APIRouter()
 
@@ -938,5 +939,82 @@ async def get_store_tax_info(store_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving tax info: {str(e)}")
 
+
+# ================== STORE DELETION ==================
+
+@router.delete("/store/{store_id}/delete-data-only")
+async def delete_store_data(store_id: str, request: Request):
+    """
+    Delete all data from a store but keep the store itself.
+    
+    This endpoint wipes all data (users, products, orders, etc.) from the store
+    but preserves the store document in the database. The store can be used again
+    with fresh data.
+    
+    Deletes:
+    - All users in the store (except the current admin)
+    - All inventory and product items
+    - All sales orders (received, sold, requested)
+    - All profit and loss orders
+    - All return orders
+    - All notifications
+    - All vendors and contracts
+    
+    Preserves:
+    - Store document
+    - Current admin user
+    """
+    user = request.state.user
+    
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+    
+    # Verify admin belongs to the store (security check)
+    admin_store_id = user.get("store_id")
+    if admin_store_id != store_id:
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Access denied: You can only delete data from your own store"
+        )
+    
+    result = await delete_store_data_only(store_id, user)
+    return result
+
+
+@router.delete("/store/{store_id}/delete-all-data")
+async def delete_store_with_all_data(store_id: str, request: Request):
+    """
+    Delete a store and all associated data across all collections.
+    
+    WARNING: This is a permanent operation that cannot be undone!
+    
+    Deletes:
+    - Store document
+    - All users in the store
+    - All inventory and product items
+    - All sales orders (received, sold, requested)
+    - All profit and loss orders
+    - All return orders
+    - All notifications
+    - All vendors and contracts
+    - Any other store-specific data
+    """
+    user = request.state.user
+    
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+    
+    # Verify admin belongs to the store being deleted (security check)
+    admin_store_id = user.get("store_id")
+    if admin_store_id != store_id:
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Access denied: You can only delete your own store. Your store: {admin_store_id}, Requested: {store_id}"
+        )
+    
+    result = await delete_store_and_data(store_id, user)
+    return result
+
+# ================== END STORE DELETION ==================
 
 # ================== END TAX CALCULATION ROUTES ==================

@@ -28,31 +28,16 @@ async def get_dashboard_data(store_id: str):
     })
 
     # ---------- 5. Total Revenue ----------
+    # Sum total_order_price from sold orders only (same logic as Sales Dashboard)
     revenue_pipeline = [
-    {"$match": {"store_id": store_id}},  # Filter by store
-    {"$unwind": "$products"},  # Unwind products array
-    {
-        "$addFields": {
-            "product_revenue": {
-                "$multiply": [
-                    {
-                        "$add": [
-                            {"$toDouble": "$products.unit_price"},
-                            {"$toDouble": {"$ifNull": ["$products.tax", 0]}}
-                        ]
-                    },
-                    {"$toDouble": "$products.order_quantity"}
-                ]
+        {"$match": {"store_id": store_id, "order_status": "1"}},  # Filter by store and ONLY sold orders
+        {
+            "$group": {
+                "_id": None,
+                "total_revenue": {"$sum": {"$toDouble": "$total_order_price"}}
             }
         }
-    },
-    {
-        "$group": {
-            "_id": None,
-            "total_revenue": {"$sum": "$product_revenue"}
-        }
-    }
-]
+    ]
 
     revenue_cursor = sales_orders_collection.aggregate(revenue_pipeline)
     revenue_result = [doc async for doc in revenue_cursor]
@@ -68,39 +53,43 @@ async def get_dashboard_data(store_id: str):
     # ---------- 7. Finance Report (Updated) ----------
     # Group by month and store_id, sum total sales, products sold (quantity), and total orders per month
     finance_pipeline = [
-        { "$match": store_filter },
+        { "$match": {"store_id": store_id, "order_status": "1"} },  # Only sold orders
         { "$unwind": "$products" },
         {
             "$addFields": {
                 "order_month": { "$month": { "$toDate": "$order_date" } },
-                "product_quantity": { "$toInt": "$products.order_quantity" },
-                "product_sales": {
-                    "$multiply": [
-                        { "$toDouble": "$products.unit_price" },
-                        { "$toInt": "$products.order_quantity" }
-                    ]
-                }
+                "product_quantity": { "$toInt": "$products.order_quantity" }
             }
         },
         {
             "$group": {
                 "_id": {
                     "month": "$order_month",
-                    "store_id": "$store_id"
+                    "store_id": "$store_id",
+                    "order_id": "$order_id"  # Group by order_id to get unique orders
                 },
-                "total_sales": { "$sum": "$product_sales" },
                 "products_sold": { "$sum": "$product_quantity" },
-                "order_ids": { "$addToSet": "$_id" }
+                "order_total": { "$first": { "$toDouble": "$total_order_price" } }  # Get order's total price once
+            }
+        },
+        {
+            "$group": {
+                "_id": {
+                    "month": "$_id.month",
+                    "store_id": "$_id.store_id"
+                },
+                "total_sales": { "$sum": "$order_total" },  # Sum all order totals
+                "products_sold": { "$sum": "$products_sold" },
+                "total_orders": { "$sum": 1 }  # Count unique orders
             }
         },
         {
             "$addFields": {
-                "total_orders": { "$size": "$order_ids" },
                 "average_order_value": {
                     "$cond": [
-                        { "$eq": [ { "$size": "$order_ids" }, 0 ] },
+                        { "$eq": [ "$total_orders", 0 ] },
                         0,
-                        { "$divide": [ "$total_sales", { "$size": "$order_ids" } ] }
+                        { "$divide": [ "$total_sales", "$total_orders" ] }
                     ]
                 }
             }
@@ -134,7 +123,7 @@ async def get_dashboard_data(store_id: str):
 
     # ---------- 8. Top Selling Products ----------
     top_selling_pipeline = [
-        { "$match": store_filter },
+        { "$match": {"store_id": store_id, "order_status": "1"} },  # Only sold orders
         { "$unwind": "$products" },
         {
             "$group": {

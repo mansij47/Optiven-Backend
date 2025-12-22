@@ -343,96 +343,152 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
         product_name = product["product_name"]
         return_quantity = product["return_quantity"]
         product_id = product.get("product_id")
-        unit_price = str(product.get("unit_price", "0.0"))
+        order_id = return_order.get("order_id")
         
-        # Get vendor details
-        vendor_name = product.get("vendor_name", "Unknown")
-        vendor_id = None
-        if vendor_name != "Unknown":
-            vendor = await db.Vendors.find_one(
-                {"vendor_name": vendor_name},
-                {"vendor_id": 1, "_id": 0}
-            )
-            if vendor:
-                vendor_id = vendor.get("vendor_id")
-        
-        # Check if product exists in Inventory
-        existing_product = await inventory_collection.find_one({
-            "product_id": product_id,
-            "store_id": store_id
-        })
-        
-        if existing_product:
-            # Update existing product quantity
-            new_quantity = existing_product.get("quantity", 0) + return_quantity
+        # ✅ CHECK: If order_id exists, these are sold items that need to be updated back to available
+        if order_id and product_id:
+            # Find sold items from this order
+            sold_items = await db.ProductItems.find({
+                "product_id": product_id,
+                "store_id": store_id,
+                "sold_order_id": order_id,
+                "status": "sold"
+            }).limit(return_quantity).to_list(length=None)
             
-            await inventory_collection.update_one(
-                {"_id": existing_product["_id"]},
-                {
-                    "$set": {
-                        "quantity": new_quantity,
-                        "updated_at": datetime.utcnow()
+            if len(sold_items) >= return_quantity:
+                # ✅ Update sold items back to available status
+                items_updated = []
+                for item in sold_items[:return_quantity]:
+                    await db.ProductItems.update_one(
+                        {"item_id": item["item_id"], "store_id": store_id},
+                        {
+                            "$set": {
+                                "status": "available",
+                                "updated_at": datetime.utcnow()
+                            },
+                            "$unset": {
+                                "sold_order_id": "",
+                                "sold_at": ""
+                            }
+                        }
+                    )
+                    items_updated.append(item["item_id"])
+                
+                # ✅ Update product quantity (count available items)
+                available_count = await db.ProductItems.count_documents({
+                    "product_id": product_id,
+                    "store_id": store_id,
+                    "status": "available"
+                })
+                
+                await inventory_collection.update_one(
+                    {"product_id": product_id, "store_id": store_id},
+                    {
+                        "$set": {
+                            "quantity": available_count,
+                            "updated_at": datetime.utcnow()
+                        }
                     }
-                }
-            )
+                )
+                
+                action = f" Returned to Inventory: {len(items_updated)} item(s) of {product_name} updated back to Available status"
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Not enough sold items found. Required: {return_quantity}, Found: {len(sold_items)}"
+                )
         else:
-            # Create new product
-            if not product_id:
-                product_id = await _next_id(inventory_collection, "product_id", "PROD", store_id)
+            # ✅ No order_id or product_id - create new items (old flow for non-sale returns)
+            unit_price = str(product.get("unit_price", "0.0"))
             
-            product_data = {
+            # Get vendor details
+            vendor_name = product.get("vendor_name", "Unknown")
+            vendor_id = None
+            if vendor_name != "Unknown":
+                vendor = await db.Vendors.find_one(
+                    {"vendor_name": vendor_name},
+                    {"vendor_id": 1, "_id": 0}
+                )
+                if vendor:
+                    vendor_id = vendor.get("vendor_id")
+            
+            # Check if product exists in Inventory
+            existing_product = await inventory_collection.find_one({
                 "product_id": product_id,
-                "org_id": org_id,
-                "store_id": store_id,
-                "product_name": product_name,
-                "quantity": return_quantity,
-                "unit": product.get("unit", "pcs"),
-                "category": product.get("category", "stationery"),
-                "sub_category": product.get("sub_category", "misc"),
-                "tags": product.get("tags", []),
-                "tax": product.get("tax", 0),
-                "min_stock": 5,
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
-                "status": "Stock-in"
-            }
+                "store_id": store_id
+            })
             
-            await inventory_collection.insert_one(product_data)
-        
-        # ✅ Create individual ProductItems for each quantity
-        items_created = []
-        
-        for i in range(return_quantity):
-            item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
+            if existing_product:
+                # Update existing product quantity
+                new_quantity = existing_product.get("quantity", 0) + return_quantity
+                
+                await inventory_collection.update_one(
+                    {"_id": existing_product["_id"]},
+                    {
+                        "$set": {
+                            "quantity": new_quantity,
+                            "updated_at": datetime.utcnow()
+                        }
+                    }
+                )
+            else:
+                # Create new product
+                if not product_id:
+                    product_id = await _next_id(inventory_collection, "product_id", "PROD", store_id)
+                
+                product_data = {
+                    "product_id": product_id,
+                    "org_id": org_id,
+                    "store_id": store_id,
+                    "product_name": product_name,
+                    "quantity": return_quantity,
+                    "unit": product.get("unit", "pcs"),
+                    "category": product.get("category", "stationery"),
+                    "sub_category": product.get("sub_category", "misc"),
+                    "tags": product.get("tags", []),
+                    "tax": product.get("tax", 0),
+                    "min_stock": 5,
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow(),
+                    "status": "Stock-in"
+                }
+                
+                await inventory_collection.insert_one(product_data)
             
-            item_data = {
-                "org_id": org_id,
-                "store_id": store_id,
-                "item_id": item_id,
-                "product_id": product_id,
-                "item_name": product_name,
-                "unit_price": unit_price,
-                "selling_price": None,  # Will be set when item is sold
-                "vendor_id": vendor_id,
-                "vendor_name": vendor_name,
-                "serial_no": None,
-                "batch_number": product.get("batch_number"),
-                "is_consumer_returnable": return_order.get("is_customer_returnable", False),
-                "consumer_return_conditions": return_order.get("consumer_return_conditions", []),
-                "is_seller_returnable": return_order.get("is_seller_returnable", False),
-                "seller_return_conditions": return_order.get("seller_return_conditions", []),
-                "has_warranty": product.get("has_warranty", False) or (product.get("warranty_tenure", 0) > 0),
-                "warranty_tenure": product.get("warranty_tenure", 0),
-                "warranty_unit": product.get("warranty_unit", "months"),
-                "status": "available",
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow()
-            }
+            # ✅ Create individual ProductItems for each quantity
+            items_created = []
             
-            await db.ProductItems.insert_one(item_data)
-            items_created.append(item_id)
-        
-        action = f" Added to Inventory: {len(items_created)} item(s) of {product_name} added to Inventory (Available for sale)"
+            for i in range(return_quantity):
+                item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
+                
+                item_data = {
+                    "org_id": org_id,
+                    "store_id": store_id,
+                    "item_id": item_id,
+                    "product_id": product_id,
+                    "item_name": product_name,
+                    "unit_price": unit_price,
+                    "selling_price": None,  # Will be set when item is sold
+                    "vendor_id": vendor_id,
+                    "vendor_name": vendor_name,
+                    "serial_no": None,
+                    "batch_number": product.get("batch_number"),
+                    "is_consumer_returnable": return_order.get("is_customer_returnable", False),
+                    "consumer_return_conditions": return_order.get("consumer_return_conditions", []),
+                    "is_seller_returnable": return_order.get("is_seller_returnable", False),
+                    "seller_return_conditions": return_order.get("seller_return_conditions", []),
+                    "has_warranty": product.get("has_warranty", False) or (product.get("warranty_tenure", 0) > 0),
+                    "warranty_tenure": product.get("warranty_tenure", 0),
+                    "warranty_unit": product.get("warranty_unit", "months"),
+                    "status": "available",
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }
+                
+                await db.ProductItems.insert_one(item_data)
+                items_created.append(item_id)
+            
+            action = f" Added to Inventory: {len(items_created)} item(s) of {product_name} added to Inventory (Available for sale)"
 
     # ✅ Update status to completed after processing
     await return_orders_collection.update_one(

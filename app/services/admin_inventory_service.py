@@ -1044,7 +1044,7 @@ async def handle_customer_return(
             # Each transition is preserved in the history
             
             await db.ProductItems.update_one(
-                {"item_id": item["item_id"]},
+                {"item_id": item["item_id"], "store_id": store_id},
                 {"$set": update_fields}
             )
             items_returned.append({

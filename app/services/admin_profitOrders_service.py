@@ -340,33 +340,13 @@ async def get_profit_data_by_user(user_id: str):
             total_profit += profit_value
 
     # ---------- Revenue Calculation (from all orders in store) ----------
+    # Sum total_order_price from sold orders only
     revenue_pipeline = [
         {"$match": {"store_id": store_id, "order_status": "1"}},  # Only sold orders
-        {"$unwind": "$products"},  # Flatten products array
-        {
-            "$addFields": {
-                "product_revenue": {
-                    "$multiply": [
-                        {
-                            "$add": [
-                                {"$toDouble": "$products.unit_price"},
-                                {
-                                    "$multiply": [
-                                        {"$toDouble": "$products.unit_price"},
-                                        {"$divide": [{"$toDouble": {"$ifNull": ["$products.tax", 0]}}, 100]}
-                                    ]
-                                }
-                            ]
-                        },
-                        {"$toDouble": "$products.order_quantity"}
-                    ]
-                }
-            }
-        },
         {
             "$group": {
                 "_id": None,
-                "total_revenue": {"$sum": "$product_revenue"}
+                "total_revenue": {"$sum": {"$toDouble": "$total_order_price"}}
             }
         }
     ]
