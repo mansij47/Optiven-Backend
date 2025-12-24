@@ -4,9 +4,15 @@ from app.models.sales_model import ProductDetails, SalesOrderDetails, SalesProdu
 from app.services.sales_add_raise_services import fetch_inventory_details
 from app.utils.tax_utils import calculate_product_total_with_tax
 from fastapi import HTTPException
+from fastapi.responses import FileResponse
 from app.utils.sales_utils import build_product_detail, parse_return_status, parse_status_string
+from app.utils.sold_order_pdf_utils import generate_sold_order_pdf
 from bson.son import SON
 from datetime import datetime
+
+sales_orders_collection = db["SalesOrders"]
+requested_orders_collection = db["RequestedOrders"]
+stores_collection = db["Stores"]
 
 
 
@@ -990,3 +996,53 @@ async def get_return_orders_by_month(store_id: str):
         {"year": r["_id"]["year"], "month": r["_id"]["month"], "count": r["count"]}
         for r in result
     ]
+
+
+async def generate_sold_order_pdf_service(order_id: str, store_id: str):
+    """
+    Service function to generate PDF for a sold order
+    
+    Args:
+        order_id: The sold order ID
+        store_id: The store ID
+        
+    Returns:
+        FileResponse: PDF file download response
+    """
+    # Fetch the sold order using existing function
+    order_data = await get_sold_order_by_id(order_id, store_id)
+    
+    if not order_data:
+        raise HTTPException(status_code=404, detail="Sold order not found")
+    
+    # Fetch store name from Stores collection
+    print(f"🔍 Fetching store name for store_id: {store_id}")
+    store = await stores_collection.find_one({"store_id": store_id}, {"_id": 0, "store_name": 1})
+    print(f"🔍 Store found: {store}")
+    if store and "store_name" in store:
+        order_data["store_name"] = store["store_name"]
+        print(f"✅ Added store_name to order_data: {store['store_name']}")
+    else:
+        print(f"❌ Store name not found for store_id: {store_id}")
+        order_data["store_name"] = "-"
+    
+    print(f"🔍 Order data before PDF generation: store_name = {order_data.get('store_name', 'NOT SET')}")
+    
+    # Ensure status field exists
+    if 'status' not in order_data:
+        order_data['status'] = 'Sold'
+    
+    # Generate PDF using temporary file (no permanent storage)
+    try:
+        pdf_path = generate_sold_order_pdf(order_data, output_dir=None)
+        
+        # Return as downloadable file with automatic cleanup
+        return FileResponse(
+            path=pdf_path,
+            media_type='application/pdf',
+            filename=f"SoldOrder_{order_id}.pdf",
+            background=None  # File will be cleaned up after response
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating PDF: {str(e)}")
+

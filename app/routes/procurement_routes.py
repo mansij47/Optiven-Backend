@@ -338,6 +338,17 @@ async def get_purchase_order(order_id: str, request: Request):
     return await procurement_purchase_services.get_purchase_order_by_id(order_id, store_id)
 
 
+@router.get("/purchase-orders/{order_id}/download-pdf")
+async def download_purchase_order_pdf(order_id: str, request: Request):
+    """
+    Generate and download purchase order as PDF
+    """
+    user = request.state.user
+    if user.get("role") != "procurement":
+        raise HTTPException(status_code=403, detail="Only procurement users are allowed.")
+
+    store_id = user.get("store_id")
+    return await procurement_purchase_services.generate_purchase_order_pdf_service(order_id, store_id)
 
 
 @router.put("/purchase-orders/{order_id}/mark-received")

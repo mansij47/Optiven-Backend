@@ -178,6 +178,23 @@ async def get_sold_order_by_id(order_id: str, request: Request):
     return {"order": order}
 
 
+@router.get("/orders/sold/{order_id}/download-pdf")
+async def download_sold_order_pdf(order_id: str, request: Request):
+    """
+    Download sold order as PDF
+    """
+    user = request.state.user
+
+    if not user or user.get("role") not in ["admin", "sales"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    return await sales_get_update_services.generate_sold_order_pdf_service(order_id, store_id)
+
+
 @router.get("/all") 
 async def fetch_all_products_route(request: Request):
     user = request.state.user
