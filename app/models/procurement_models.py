@@ -331,6 +331,7 @@ class MonthlyStats(BaseModel):
 
 class SupplierContract(BaseModel):
     name: str
+    email: str
     value: str
     status: str
 

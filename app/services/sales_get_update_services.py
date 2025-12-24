@@ -189,9 +189,16 @@ async def fetch_order_and_validate(order_id: str, store_id: str):
 async def update_inventory_for_order(order, store_id: str, tax: float = None):
     sold_items_map = {}  # Track which items were sold for each product
     
+    # ✅ Extract customer information from order
+    customer_name = order.get("customer_name", "N/A")
+    customer_phone = order.get("customer_phone", "N/A")
+    customer_email = order.get("customer_email", "N/A")
+    order_id = order.get("order_id")
+    
     # ✅ DEBUG: Log the order and store_id
     print(f"🔍 [SELL] Processing order for store_id: {store_id}")
     print(f"🔍 [SELL] Order products: {order.get('products', [])}")
+    print(f"🔍 [SELL] Customer: {customer_name} ({customer_email})")
     
     # ✅ VALIDATION PHASE: Check all products before making any changes
     for product in order.get("products", []):
@@ -274,34 +281,37 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
             item_id = item["item_id"]
             sold_item_ids.append(item_id)
             
-            # ✅ Preserve previous sales history by using $push to add to sales_history array
-            # If item was previously sold and returned, we keep that history
-            # Do NOT update selling_price - keep the original value set during item creation
+            # ✅ Create history entry for this sale with customer information
+            sale_history_entry = {
+                "event_type": "sale",
+                "order_id": order_id,
+                "customer_name": customer_name,
+                "customer_phone": customer_phone,
+                "customer_email": customer_email,
+                "selling_price": order_selling_price,
+                "sold_at": datetime.utcnow(),
+                "timestamp": datetime.utcnow()
+            }
+            
+            # Add tax to history if provided
+            if tax is not None:
+                sale_history_entry["tax"] = tax
+            
             update_data = {
                 "$set": {
                     "status": "sold",
                     "updated_at": datetime.utcnow(),
-                    "sold_order_id": order.get("order_id"),
+                    "sold_order_id": order_id,
                     "sold_at": datetime.utcnow()
+                },
+                "$push": {
+                    "history": sale_history_entry
                 }
             }
             
             # ✅ Update Tax field (sales GST) if provided from popup
             if tax is not None:
                 update_data["$set"]["Tax"] = tax
-            
-            # If item has previous sale history (was returned), archive it
-            if item.get("sold_order_id") and item.get("sold_order_id") != order.get("order_id"):
-                # Initialize sales_history array if it doesn't exist, then add previous sale
-                update_data["$push"] = {
-                    "sales_history": {
-                        "previous_order_id": item.get("sold_order_id"),
-                        "previous_sold_at": item.get("sold_at"),
-                        "returned_at": item.get("returned_at"),
-                        "return_reason": item.get("return_reason"),
-                        "archived_at": datetime.utcnow()
-                    }
-                }
             
             # ✅ Add store_id to update filter for safety
             result = await db.ProductItems.update_one(
@@ -723,6 +733,15 @@ async def get_sales_order_by_id(order_id: str, store_id: str):
         product_id = product.get("product_id")
         ordered_quantity = int(product.get("order_quantity", 0))
         item_ids = product.get("item_ids", [])
+
+        # ✅ Fetch vendor_tax from Inventory collection
+        inventory_product = await db.Inventory.find_one({
+            "product_id": product_id,
+            "store_id": store_id
+        }, {"vendor_tax": 1, "_id": 0})
+        
+        if inventory_product and inventory_product.get("vendor_tax"):
+            product["vendor_tax"] = inventory_product.get("vendor_tax")
 
         # ✅ Count available items from ProductItems collection
         available_items_count = await db.ProductItems.count_documents({
