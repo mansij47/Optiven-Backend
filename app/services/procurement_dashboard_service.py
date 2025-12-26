@@ -58,18 +58,34 @@ async def get_procurement_dashboard_data(store_id: str) -> ProcurementDashboardR
         ) for m in months_ordered
     ]
 
-    # 3. Recent Supplier Contracts
-    contracts_cursor = db.Contracts.find({"store_id": store_id}).sort("created_at", -1).limit(3)
-    contracts: List[SupplierContract] = []
+    # 3. Recent Supplier Vendors (from Vendors collection)
+    vendors_cursor = db.Vendors.find({"store_id": store_id}).sort("created_at", -1).limit(3)
+    vendors_list: List[SupplierContract] = []
 
-    async for doc in contracts_cursor:
-        raw_value = doc.get("contract_value", 0)
-        value = f"₹{int(raw_value):,}" if isinstance(raw_value, (int, float)) else str(raw_value or "₹0")
+    async for vendor in vendors_cursor:
+        vendor_name = vendor.get("vendor_name", "Unknown")
+        vendor_id = vendor.get("vendor_id")
+        vendor_email = vendor.get("email", "N/A")
+        
+        # Calculate total spent for this vendor from purchase orders
+        total_spent = 0
+        async for po in db.PurchaseOrders.find({
+            "store_id": store_id,
+            "$or": [
+                {"vendor_name": vendor_name},
+                {"vendor_id": vendor_id}
+            ]
+        }):
+            total_spent += po.get("amount", 0)
+        
+        # Format value as currency
+        value = f"₹{int(total_spent):,}" if total_spent > 0 else "₹0"
 
-        contracts.append(SupplierContract(
-            name=doc.get("vendor_name", "Unknown"),
+        vendors_list.append(SupplierContract(
+            name=vendor_name,
+            email=vendor_email,
             value=value,
-            status=doc.get("status", "unknown").capitalize()
+            status=vendor.get("status", "unknown").capitalize()
         ))
 
     return ProcurementDashboardResponse(
@@ -78,6 +94,6 @@ async def get_procurement_dashboard_data(store_id: str) -> ProcurementDashboardR
         active_contracts=active_contracts,
         returns_initiated=returns_initiated,
         monthly_data=monthly_data,
-        supplier_contracts=contracts
+        supplier_contracts=vendors_list
     )
     

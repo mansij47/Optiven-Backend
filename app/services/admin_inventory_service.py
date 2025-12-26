@@ -828,6 +828,7 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None, s
     """
     Mark an item as sold and automatically update product quantity.
     This is the correct approach - we sell ITEMS, not products!
+    Maintains complete history of all sales in the item's history array.
     
     Args:
         selling_price: Optional custom selling price. If not provided, uses product's default.
@@ -846,7 +847,16 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None, s
         
         product_id = item.get("product_id")
         
-        # Mark item as sold - do NOT update selling_price (keep original value set during creation)
+        # Create history entry for this sale
+        sale_history_entry = {
+            "event_type": "sale",
+            "order_id": order_id,
+            "selling_price": selling_price if selling_price is not None else item.get("selling_price", 0),
+            "sold_at": datetime.utcnow(),
+            "timestamp": datetime.utcnow()
+        }
+        
+        # Mark item as sold and append to history
         await db.ProductItems.update_one(
             {"item_id": item_id, "store_id": store_id},
             {
@@ -855,6 +865,9 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None, s
                     "sold_order_id": order_id,
                     "sold_at": datetime.utcnow(),
                     "updated_at": datetime.utcnow()
+                },
+                "$push": {
+                    "history": sale_history_entry
                 }
             }
         )
@@ -1024,9 +1037,20 @@ async def handle_customer_return(
             new_status = "available"
             destination = "Inventory"
         
-        # ✅ 3. Update each returned item's status
+        # ✅ 3. Update each returned item's status and add to history
         items_returned = []
         for item in sold_items:
+            # Create history entry for this return
+            return_history_entry = {
+                "event_type": "return",
+                "order_id": order_id,
+                "return_reason": return_reason,
+                "new_status": new_status,
+                "destination": destination,
+                "returned_at": datetime.utcnow(),
+                "timestamp": datetime.utcnow()
+            }
+            
             update_fields = {
                 "status": new_status,
                 "returned_at": datetime.utcnow(),
@@ -1035,17 +1059,16 @@ async def handle_customer_return(
             }
             
             # ✅ KEEP SALES HISTORY - Don't clear sold_order_id and sold_at
-            # This preserves the complete item lifecycle history:
-            # - sold_order_id: tracks which order originally sold this item
-            # - sold_at: timestamp of when it was sold
-            # - returned_at: timestamp of when it was returned
-            # - return_reason: why it was returned
-            # This allows tracking: available → sold → returned → available (resold) → returned again
-            # Each transition is preserved in the history
+            # Add return event to history array to maintain complete timeline
             
             await db.ProductItems.update_one(
                 {"item_id": item["item_id"], "store_id": store_id},
-                {"$set": update_fields}
+                {
+                    "$set": update_fields,
+                    "$push": {
+                        "history": return_history_entry
+                    }
+                }
             )
             items_returned.append({
                 "item_id": item["item_id"],

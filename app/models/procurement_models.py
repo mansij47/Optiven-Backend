@@ -218,6 +218,7 @@ class PurchaseOrderDetailResponse(BaseModel):
     is_consumer_returnable: Optional[bool] = None
     consumer_return_conditions: Optional[List[str]] = []
     store_id: Optional[str] = None
+    store_name: Optional[str] = None  # Added for PDF generation
     org_id: Optional[str] = None
     warranty_tenure: Optional[int] = None
     warranty_unit: Optional[str] = None
@@ -331,6 +332,7 @@ class MonthlyStats(BaseModel):
 
 class SupplierContract(BaseModel):
     name: str
+    email: str
     value: str
     status: str
 

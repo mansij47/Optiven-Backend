@@ -4,9 +4,15 @@ from app.models.sales_model import ProductDetails, SalesOrderDetails, SalesProdu
 from app.services.sales_add_raise_services import fetch_inventory_details
 from app.utils.tax_utils import calculate_product_total_with_tax
 from fastapi import HTTPException
+from fastapi.responses import FileResponse
 from app.utils.sales_utils import build_product_detail, parse_return_status, parse_status_string
+from app.utils.sold_order_pdf_utils import generate_sold_order_pdf
 from bson.son import SON
 from datetime import datetime
+
+sales_orders_collection = db["SalesOrders"]
+requested_orders_collection = db["RequestedOrders"]
+stores_collection = db["Stores"]
 
 
 
@@ -189,9 +195,16 @@ async def fetch_order_and_validate(order_id: str, store_id: str):
 async def update_inventory_for_order(order, store_id: str, tax: float = None):
     sold_items_map = {}  # Track which items were sold for each product
     
+    # ✅ Extract customer information from order
+    customer_name = order.get("customer_name", "N/A")
+    customer_phone = order.get("customer_phone", "N/A")
+    customer_email = order.get("customer_email", "N/A")
+    order_id = order.get("order_id")
+    
     # ✅ DEBUG: Log the order and store_id
     print(f"🔍 [SELL] Processing order for store_id: {store_id}")
     print(f"🔍 [SELL] Order products: {order.get('products', [])}")
+    print(f"🔍 [SELL] Customer: {customer_name} ({customer_email})")
     
     # ✅ VALIDATION PHASE: Check all products before making any changes
     for product in order.get("products", []):
@@ -274,34 +287,37 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
             item_id = item["item_id"]
             sold_item_ids.append(item_id)
             
-            # ✅ Preserve previous sales history by using $push to add to sales_history array
-            # If item was previously sold and returned, we keep that history
-            # Do NOT update selling_price - keep the original value set during item creation
+            # ✅ Create history entry for this sale with customer information
+            sale_history_entry = {
+                "event_type": "sale",
+                "order_id": order_id,
+                "customer_name": customer_name,
+                "customer_phone": customer_phone,
+                "customer_email": customer_email,
+                "selling_price": order_selling_price,
+                "sold_at": datetime.utcnow(),
+                "timestamp": datetime.utcnow()
+            }
+            
+            # Add tax to history if provided
+            if tax is not None:
+                sale_history_entry["tax"] = tax
+            
             update_data = {
                 "$set": {
                     "status": "sold",
                     "updated_at": datetime.utcnow(),
-                    "sold_order_id": order.get("order_id"),
+                    "sold_order_id": order_id,
                     "sold_at": datetime.utcnow()
+                },
+                "$push": {
+                    "history": sale_history_entry
                 }
             }
             
             # ✅ Update Tax field (sales GST) if provided from popup
             if tax is not None:
                 update_data["$set"]["Tax"] = tax
-            
-            # If item has previous sale history (was returned), archive it
-            if item.get("sold_order_id") and item.get("sold_order_id") != order.get("order_id"):
-                # Initialize sales_history array if it doesn't exist, then add previous sale
-                update_data["$push"] = {
-                    "sales_history": {
-                        "previous_order_id": item.get("sold_order_id"),
-                        "previous_sold_at": item.get("sold_at"),
-                        "returned_at": item.get("returned_at"),
-                        "return_reason": item.get("return_reason"),
-                        "archived_at": datetime.utcnow()
-                    }
-                }
             
             # ✅ Add store_id to update filter for safety
             result = await db.ProductItems.update_one(
@@ -724,6 +740,15 @@ async def get_sales_order_by_id(order_id: str, store_id: str):
         ordered_quantity = int(product.get("order_quantity", 0))
         item_ids = product.get("item_ids", [])
 
+        # ✅ Fetch vendor_tax from Inventory collection
+        inventory_product = await db.Inventory.find_one({
+            "product_id": product_id,
+            "store_id": store_id
+        }, {"vendor_tax": 1, "_id": 0})
+        
+        if inventory_product and inventory_product.get("vendor_tax"):
+            product["vendor_tax"] = inventory_product.get("vendor_tax")
+
         # ✅ Count available items from ProductItems collection
         available_items_count = await db.ProductItems.count_documents({
             "product_id": product_id,
@@ -971,3 +996,53 @@ async def get_return_orders_by_month(store_id: str):
         {"year": r["_id"]["year"], "month": r["_id"]["month"], "count": r["count"]}
         for r in result
     ]
+
+
+async def generate_sold_order_pdf_service(order_id: str, store_id: str):
+    """
+    Service function to generate PDF for a sold order
+    
+    Args:
+        order_id: The sold order ID
+        store_id: The store ID
+        
+    Returns:
+        FileResponse: PDF file download response
+    """
+    # Fetch the sold order using existing function
+    order_data = await get_sold_order_by_id(order_id, store_id)
+    
+    if not order_data:
+        raise HTTPException(status_code=404, detail="Sold order not found")
+    
+    # Fetch store name from Stores collection
+    print(f"🔍 Fetching store name for store_id: {store_id}")
+    store = await stores_collection.find_one({"store_id": store_id}, {"_id": 0, "store_name": 1})
+    print(f"🔍 Store found: {store}")
+    if store and "store_name" in store:
+        order_data["store_name"] = store["store_name"]
+        print(f"✅ Added store_name to order_data: {store['store_name']}")
+    else:
+        print(f"❌ Store name not found for store_id: {store_id}")
+        order_data["store_name"] = "-"
+    
+    print(f"🔍 Order data before PDF generation: store_name = {order_data.get('store_name', 'NOT SET')}")
+    
+    # Ensure status field exists
+    if 'status' not in order_data:
+        order_data['status'] = 'Sold'
+    
+    # Generate PDF using temporary file (no permanent storage)
+    try:
+        pdf_path = generate_sold_order_pdf(order_data, output_dir=None)
+        
+        # Return as downloadable file with automatic cleanup
+        return FileResponse(
+            path=pdf_path,
+            media_type='application/pdf',
+            filename=f"SoldOrder_{order_id}.pdf",
+            background=None  # File will be cleaned up after response
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating PDF: {str(e)}")
+
