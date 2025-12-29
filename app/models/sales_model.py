@@ -2,6 +2,23 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional
 from datetime import datetime
 
+class CustomerModel(BaseModel):
+    customer_id: str
+    customer_name: str
+    customer_email: Optional[str] = None
+    customer_phone: Optional[str] = None
+    total_orders: int = 0
+    total_purchase_amount: float = 0.0
+    total_purchase_quantity: int = 0
+    payment_status: Optional[str] = None  # 'Paid' or 'Unpaid' based on latest order
+    first_order_date: Optional[datetime] = None
+    last_order_date: Optional[datetime] = None
+    delivery_address: Optional[str] = None
+    gst_number: Optional[str] = None
+    store_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
 class SellOrderPayload(BaseModel):
     quantity: int
     price: float
