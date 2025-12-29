@@ -1,6 +1,7 @@
 import logging
 import uuid
 from fastapi import HTTPException,Request
+from fastapi.responses import FileResponse
 from bson import ObjectId
 from datetime import datetime
 from app.db import db
@@ -8,6 +9,7 @@ from typing import Dict
 
 from app.models.procurement_models import Contract
 from app.utils.auth import verify_password, create_access_token
+from app.utils.contract_pdf_utils import generate_contract_pdf_from_schema
  
 from app.services.vendor_service import create_vendor
 from app.models.procurement_models import VendorModel
@@ -19,6 +21,7 @@ from app.models.procurement_models import ContractUpdate  # Your Pydantic model
 contracts_collection = db["Contracts"]
 purchase_orders_collection = db["PurchaseOrders"]
 VENDOR_COLLECTION = db["Vendors"]
+stores_collection = db["Stores"]
 
 #Add Contract
 async def add_contract(contract_data: Contract, store_id: str, request: Request):
@@ -237,3 +240,53 @@ async def get_contract_by_id(contract_id: str, store_id: str):
         raise HTTPException(status_code=404, detail="Contract not found.")
 
     return {"contract": contract}
+
+
+async def generate_contract_pdf_service(contract_id: str, store_id: str):
+    """
+    Generate and return contract PDF
+    
+    Args:
+        contract_id: ID of the contract
+        store_id: Store ID for authorization
+        
+    Returns:
+        FileResponse: PDF file for download
+    """
+    # Fetch contract details from database
+    contract = await contracts_collection.find_one(
+        {"contract_id": contract_id, "store_id": store_id},
+        {"_id": 0}
+    )
+    
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found.")
+    
+    # Fetch store name from Stores collection
+    print(f"🔍 Fetching store name for store_id: {store_id}")
+    store = await stores_collection.find_one({"store_id": store_id}, {"_id": 0, "store_name": 1})
+    print(f"🔍 Store found: {store}")
+    if store and "store_name" in store:
+        contract["store_name"] = store["store_name"]
+    else:
+        contract["store_name"] = "N/A"
+    
+    print(f"🔍 Contract data before PDF generation: store_name = {contract.get('store_name', 'NOT SET')}")
+    
+    # Generate PDF
+    try:
+        pdf_path = generate_contract_pdf_from_schema(contract)
+        
+        # Return PDF as file response
+        return FileResponse(
+            path=pdf_path,
+            media_type="application/pdf",
+            filename=f"Contract_{contract_id}.pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=Contract_{contract_id}.pdf"
+            }
+        )
+    except Exception as e:
+        logging.error(f"Error generating contract PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generating PDF: {str(e)}")
+
