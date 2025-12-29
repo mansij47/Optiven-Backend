@@ -351,6 +351,19 @@ async def download_purchase_order_pdf(order_id: str, request: Request):
     return await procurement_purchase_services.generate_purchase_order_pdf_service(order_id, store_id)
 
 
+@router.get("/contracts/{contract_id}/download-pdf")
+async def download_contract_pdf(contract_id: str, request: Request):
+    """
+    Generate and download contract as PDF
+    """
+    user = request.state.user
+    if user.get("role") not in ["procurement", "admin"]:
+        raise HTTPException(status_code=403, detail="Only procurement or admin users are allowed.")
+
+    store_id = user.get("store_id")
+    return await procurement_contract_services.generate_contract_pdf_service(contract_id, store_id)
+
+
 @router.put("/purchase-orders/{order_id}/mark-received")
 async def mark_as_received(order_id: str):
     return await procurement_purchase_services.mark_purchase_order_as_received(order_id)
