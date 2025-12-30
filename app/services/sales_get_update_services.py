@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from app.utils.sales_utils import build_product_detail, parse_return_status, parse_status_string
 from app.utils.sold_order_pdf_utils import generate_sold_order_pdf
 from bson.son import SON
-from datetime import datetime
+from datetime import datetime,timezone
 
 sales_orders_collection = db["SalesOrders"]
 requested_orders_collection = db["RequestedOrders"]
@@ -328,7 +328,7 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
             
             # Verify the update actually worked
             verify_item = await db.ProductItems.find_one({"item_id": item_id, "store_id": store_id})
-            print(f"🔍 [SELL] Verified item {item_id} status after update: {verify_item.get('status')}, store: {verify_item.get('store_id')}")
+            # print(f"🔍 [SELL] Verified item {item_id} status after update: {verify_item.get('status')}, store: {verify_item.get('store_id')}")
 
         # Store the sold items for this product
         sold_items_map[product_id] = sold_item_ids
@@ -339,7 +339,7 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
             "product_id": product_id,
             "store_id": store_id
         }, {"item_id": 1, "status": 1, "_id": 0}).to_list(None)
-        print(f"🔍 [SELL] ALL items for {product_id} in {store_id}: {all_items_debug}")
+        # print(f"🔍 [SELL] ALL items for {product_id} in {store_id}: {all_items_debug}")
 
         # ✅ Update product quantity (count remaining available items)
         remaining_items = await db.ProductItems.count_documents({
@@ -348,7 +348,7 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
             "status": "available"
         })
         
-        print(f"🔍 [SELL] Counting remaining items - product_id: {product_id}, store_id: {store_id}, remaining: {remaining_items}")
+        # print(f"🔍 [SELL] Counting remaining items - product_id: {product_id}, store_id: {store_id}, remaining: {remaining_items}")
 
         await db.Inventory.update_one(
             {"product_id": product_id, "store_id": store_id},
@@ -422,7 +422,8 @@ async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None,
             "$set": {
                 "order_status": "1",
                 "products": updated_products,
-                "sold_at": datetime.utcnow()
+                "sold_at": datetime.now(timezone.utc),  # ✅ FIXED
+                "updated_at": datetime.now(timezone.utc)
             }
         }
     )
@@ -435,6 +436,15 @@ async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None,
     except Exception as e:
         # Log error but don't fail the main operation
         print(f"⚠️ Warning: Failed to sync profit for order {order_id}: {str(e)}")
+    
+    # ✅ AUTO-SYNC: Add this sold order to CustomerHistory collection
+    try:
+        from app.services import customer_services
+        sync_result = await customer_services.sync_order_to_customer_history(order_id, store_id)
+        print(f"✅ Customer history sync: order {order_id} synced successfully")
+    except Exception as e:
+        # Log error but don't fail the main operation
+        print(f"⚠️ Warning: Failed to sync customer history for order {order_id}: {str(e)}")
     
     return 1  # Return success count
 
