@@ -379,7 +379,7 @@ async def mark_order_status_as_sold(order_id: str, store_id: str):
     )
     return result.modified_count
 
-async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None, price: float = None, tax: float = None):
+async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None, price: float = None, tax: float = None, payment_status: str = "Paid"):
     order = await fetch_order_and_validate(order_id, store_id)
     
     # ✅ If quantity is provided from popup, update the order's quantity before processing
@@ -412,6 +412,8 @@ async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None,
         updated_products.append(product_copy)
     
     # Update the order with item information
+    # ✅ IMPORTANT: order_status is ALWAYS "1" for sold orders, regardless of payment status
+    # payment_status tracks whether payment was received ("Paid") or deferred ("Pay Later")
     await db.SalesOrders.update_one(
         {
             "order_id": order_id,
@@ -420,7 +422,8 @@ async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None,
         },
         {
             "$set": {
-                "order_status": "1",
+                "order_status": "1",  # Always "1" for sold orders
+                "payment_status": payment_status,  # Track payment separately
                 "products": updated_products,
                 "sold_at": datetime.now(timezone.utc),  # ✅ FIXED
                 "updated_at": datetime.now(timezone.utc)
@@ -447,6 +450,48 @@ async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None,
         print(f"⚠️ Warning: Failed to sync customer history for order {order_id}: {str(e)}")
     
     return 1  # Return success count
+
+
+async def mark_pending_order_as_paid(order_id: str, store_id: str):
+    """
+    Update payment status from 'Pay Later' to 'Paid' for a sold order.
+    Also updates sold_at timestamp to current time.
+    """
+    # Find the order
+    order = await db.SalesOrders.find_one({
+        "order_id": order_id,
+        "store_id": store_id,
+        "order_status": "1"  # Only sold orders
+    })
+    
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found or not sold yet")
+    
+    # Update payment status to Paid
+    result = await db.SalesOrders.update_one(
+        {
+            "order_id": order_id,
+            "store_id": store_id,
+            "order_status": "1"
+        },
+        {
+            "$set": {
+                "payment_status": "Paid",
+                "sold_at": datetime.now(timezone.utc),  # Update payment date
+                "updated_at": datetime.now(timezone.utc)
+            }
+        }
+    )
+    
+    # ✅ Sync to CustomerHistory collection
+    try:
+        from app.services import customer_services
+        await customer_services.sync_order_to_customer_history(order_id, store_id)
+        print(f"✅ Customer history synced for order {order_id}")
+    except Exception as e:
+        print(f"⚠️ Warning: Failed to sync customer history: {str(e)}")
+    
+    return result.modified_count
 
 
 async def delete_order_by_id(order_id: str, store_id: str) -> int:
