@@ -6,6 +6,7 @@ from app.services import sales_add_raise_services
 from app.services.sales_add_raise_services import raise_request_order_service
 from app.services.sales_get_update_services import get_all_procurement_returns,get_procurement_return_by_id, get_product_details_service, get_sales_order_by_id
 from app.services import sales_login_services as svc
+from app.services import customer_services
 
 router = APIRouter()
 
@@ -464,3 +465,52 @@ async def return_orders_by_month(request: Request):
 
     data = await sales_get_update_services.get_return_orders_by_month(store_id)
     return data
+
+
+# Customer routes
+@router.get("/customers")
+async def get_all_customers(request: Request):
+    """Get all customers with aggregated purchase data"""
+    user = request.state.user
+
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    customers = await customer_services.get_all_customers(store_id=store_id)
+    return {"customers": customers}
+
+
+@router.get("/customers/{customer_id}")
+async def get_customer_details(customer_id: str, request: Request):
+    """Get detailed customer information including order history"""
+    user = request.state.user
+
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    customer = await customer_services.get_customer_by_id(customer_id, store_id=store_id)
+    return customer
+
+
+@router.get("/customers/search")
+async def search_customers(query: str = Query(..., min_length=1), request: Request = None):
+    """Search customers by name, email, or phone"""
+    user = request.state.user
+
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    customers = await customer_services.search_customers(query, store_id=store_id)
+    return {"customers": customers}
