@@ -11,6 +11,7 @@ class CustomerModel(BaseModel):
     total_purchase_amount: float = 0.0
     total_purchase_quantity: int = 0
     payment_status: Optional[str] = None  # 'Paid' or 'Unpaid' based on latest order
+    payment_date: Optional[datetime] = None  # ✅ Date when order was paid (sold)
     first_order_date: Optional[datetime] = None
     last_order_date: Optional[datetime] = None
     delivery_address: Optional[str] = None

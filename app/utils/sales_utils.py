@@ -23,8 +23,11 @@ async def generate_order_id():
 def build_product_detail(inventory_item: dict, product_id: str, unit_price: float,
                          product_tax: float, order_quantity: int, inventory_quantity: int, 
                          consumer_return_conditions: list, selling_price: float = None):
-    line_total = unit_price * order_quantity
-    tax = calculate_tax_amount(unit_price, product_tax, order_quantity)
+    # ✅ Use selling_price for customer orders (what customer pays), fallback to unit_price if not provided
+    price_for_customer = selling_price if selling_price and selling_price > 0 else unit_price
+    
+    line_total = price_for_customer * order_quantity
+    tax = calculate_tax_amount(price_for_customer, product_tax, order_quantity)
 
     # Set default return conditions if none provided
     default_conditions = ["Wrong product", "Damaged on arrival", "Quality issues"]
@@ -33,7 +36,7 @@ def build_product_detail(inventory_item: dict, product_id: str, unit_price: floa
     product_detail = {
         "product_id": product_id,
         "product_name": inventory_item["product_name"],
-        "unit_price": unit_price,
+        "unit_price": price_for_customer,  # ✅ Store selling_price as unit_price for customer orders
         "selling_price": selling_price ,  # Store customer-paid price
         "category": inventory_item["category"],
         "order_quantity": order_quantity,
