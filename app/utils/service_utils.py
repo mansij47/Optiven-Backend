@@ -1,47 +1,27 @@
 from bson import ObjectId
-from app.db import db
 from datetime import datetime
 
-ReturnToVendor = db.ReturnToVendor
-SalesOrders = db.SalesOrders  # point to SalesOrders collection
-VENDOR_COLLECTION = db.Vendors  # point to Vendors collection
 
-
-# Delete ReturnToVendor by ObjectId
-async def delete_return_to_vendor(_id: str) -> int:
+async def delete_by_object_id(collection, object_id: str) -> int:
     """
-    Delete a ReturnToVendor document by its ObjectId.
-    Returns deleted_count (0 if not found, 1 if deleted).
-    """
-    if not ObjectId.is_valid(_id):
-        return 0  # Invalid ObjectId format
-
-    result = await ReturnToVendor.delete_one({"_id": ObjectId(_id)})
-    return result.deleted_count
-
-
-# Delete SalesOrder by ObjectId
-async def delete_sales_order(_id: str) -> int:
-    """
-    Delete a SalesOrder document by its ObjectId.
-    Returns deleted_count (0 if not found, 1 if deleted).
-    """
-    if not ObjectId.is_valid(_id):
-        return 0  # Invalid ObjectId format
-
-    result = await SalesOrders.delete_one({"_id": ObjectId(_id)})
-    return result.deleted_count
-
-
-# Delete Vendor by ObjectId
-async def delete_vendor(vendor_id: str) -> int:
-    """
-    Delete a Vendor document by its ObjectId.
-    Returns deleted_count (0 if not found, 1 if deleted).
-    """
-    if not ObjectId.is_valid(vendor_id):
-        return 0  # Invalid ObjectId format
+    Common function to delete a document from any collection by its ObjectId.
     
-    result = await VENDOR_COLLECTION.delete_one({"_id": ObjectId(vendor_id)})
+    Args:
+        collection: MongoDB collection object (e.g., db.SalesOrders, db.Vendors)
+        object_id: String representation of the ObjectId to delete
+    
+    Returns:
+        int: deleted_count (0 if not found or invalid ObjectId, 1 if deleted successfully)
+    
+    Usage:
+        from app.db import db
+        await delete_by_object_id(db.SalesOrders, "507f1f77bcf86cd799439011")
+        await delete_by_object_id(db.Vendors, vendor_id)
+        await delete_by_object_id(db.ReturnToVendor, return_id)
+    """
+    if not ObjectId.is_valid(object_id):
+        return 0  # Invalid ObjectId format
+
+    result = await collection.delete_one({"_id": ObjectId(object_id)})
     return result.deleted_count
 

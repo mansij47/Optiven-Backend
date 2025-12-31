@@ -1,11 +1,12 @@
 # services/procurement_validation_services.py
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
 from bson import ObjectId
 from app.db import db
 from app.models.procurement_models import PurchaseOrderValidationInput, PurchaseOrderValidationRequest, PurchaseOrderSubmitRequest
 import uuid
 from datetime import datetime
 from app.utils.tax_utils import calculate_tax_amount
+from app.utils.inventory_sync import sync_inventory_on_change, bulk_sync_inventory
 
 
 async def update_sales_orders_on_inventory_change(product_name: str, product_id: str, store_id: str, selling_price: float, consumer_tax: float):
@@ -205,7 +206,7 @@ def generate_id(prefix: str) -> str:
     return f"{prefix}{uuid.uuid4().hex[:6].upper()}"
 
 
-async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str, org_id: str):
+async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str, org_id: str, background_tasks: BackgroundTasks = None):
     base_order = await db["PurchaseOrders"].find_one({"order_id": data.order_id})
     if not base_order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -553,27 +554,17 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             }
             await db["ReturnToVendor"].insert_one(return_doc)
         
-        # ✅ Calculate and update average_price, vendor_tax, and average_selling_price at product level
-        from app.services.admin_inventory_service import calculate_average_price, calculate_average_selling_price, calculate_average_vendor_tax
-        average_price = await calculate_average_price(product_id, store_id)
-        
-        # ✅ Calculate average_vendor_tax from all items' vendor_tax
-        average_vendor_tax = await calculate_average_vendor_tax(product_id, store_id)
-        
-        # ✅ Calculate average_selling_price from all items' selling_price
-        average_selling_price = await calculate_average_selling_price(product_id, store_id)
-        
-        await db.Inventory.update_one(
-            {"product_id": product_id, "store_id": store_id},
-            {"$set": {
-                "average_price": average_price,
-                "vendor_tax": average_vendor_tax,
-                "average_selling_price": average_selling_price,
-                "updated_at": datetime.utcnow()
-            }}
-        )
+        # ✅ Sync inventory calculations and low-stock check (event-driven)
+        # This replaces manual calculations and check_and_notify_low_stock
+        await sync_inventory_on_change(product_id, store_id, background_tasks)
         
         # ✅ NOW Update preorder sales orders with selling price and consumer tax from inventory
+        # Get updated product with calculated averages
+        updated_product = await db.Inventory.find_one({"product_id": product_id, "store_id": store_id})
+        average_selling_price = updated_product.get("average_selling_price", 0.0) if updated_product else 0.0
+        total_quantity = updated_product.get("quantity", 0) if updated_product else 0
+        average_price = updated_product.get("average_price", 0.0) if updated_product else 0.0
+        
         await update_sales_orders_on_inventory_change(
             base_order.get("product_name"), 
             product_id, 
@@ -581,14 +572,6 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             float(average_selling_price),  # Use selling price from inventory
             float(base_order.get("tax", 0))  # Consumer tax from purchase order
         )
-        
-        # Get updated product quantity
-        updated_product = await db.Inventory.find_one({"product_id": product_id, "store_id": store_id})
-        total_quantity = updated_product.get("quantity", 0) if updated_product else 0
-        
-        # ✅ Check for low stock and send notification if needed
-        from app.services.admin_inventory_service import check_and_notify_low_stock
-        await check_and_notify_low_stock(product_id, store_id)
         
         # ✅ Detailed message for semi-damaged
         if data.is_semi_damaged:
