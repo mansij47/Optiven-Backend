@@ -12,6 +12,7 @@ class CustomerModel(BaseModel):
     total_purchase_quantity: int = 0
     payment_status: Optional[str] = None  # 'Paid' or 'Unpaid' based on latest order
     payment_date: Optional[datetime] = None  # ✅ Date when order was paid (sold)
+    latest_order_id: Optional[str] = None  # ✅ Latest order ID for Mark as Paid functionality
     first_order_date: Optional[datetime] = None
     last_order_date: Optional[datetime] = None
     delivery_address: Optional[str] = None
@@ -24,6 +25,7 @@ class SellOrderPayload(BaseModel):
     quantity: int
     price: float
     tax: float
+    payment_status: str = "Paid"  # ✅ Default to 'Paid', can be 'Pay Later'
 
 class Product(BaseModel):
     org_id: str

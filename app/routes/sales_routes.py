@@ -104,7 +104,8 @@ async def mark_order_as_sold(order_id: str, payload: SellOrderPayload, request: 
         store_id,
         quantity=payload.quantity,
         price=payload.price,
-        tax=payload.tax
+        tax=payload.tax,
+        payment_status=payload.payment_status  # ✅ Add payment status
     )
 
     if updated_count == 0:
@@ -140,6 +141,23 @@ async def mark_order_as_sold(order_id: str, payload: SellOrderPayload, request: 
         "order_id": order_id,
         "notification": notification_response
     }
+
+
+# ✅ Mark pending (Pay Later) order as paid
+@router.put("/orders/sold/{order_id}/mark-paid")
+async def mark_pending_as_paid(order_id: str, request: Request):
+    user = request.state.user
+
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    result = await sales_get_update_services.mark_pending_order_as_paid(order_id, store_id)
+    return result
+
 
 #order deleted successfully notification
 @router.delete("/orders/received/{order_id}") 

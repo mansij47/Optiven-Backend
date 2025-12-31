@@ -38,6 +38,8 @@ async def get_all_customers(store_id: Optional[str] = None) -> List[CustomerMode
                 "first_order_date": {"$min": "$created_at"},
                 "last_order_date": {"$max": "$created_at"},
                 "latest_order_status": {"$first": "$order_status"},  # Get latest order status
+                "latest_payment_status": {"$first": "$payment_status"},  # ✅ Get payment status from latest order
+                "latest_order_id": {"$first": "$order_id"},  # ✅ Get latest order ID for mark as paid
                 "payment_date": {"$max": "$sold_at"},  # ✅ Get most recent payment date
                 "all_products": {"$push": "$products"}
             }
@@ -57,6 +59,8 @@ async def get_all_customers(store_id: Optional[str] = None) -> List[CustomerMode
                 "first_order_date": 1,
                 "last_order_date": 1,
                 "latest_order_status": 1,
+                "latest_payment_status": 1,
+                "latest_order_id": 1,
                 "payment_date": 1,
                 "all_products": 1
             }
@@ -100,9 +104,16 @@ async def get_all_customers(store_id: Optional[str] = None) -> List[CustomerMode
         customer["total_purchase_quantity"] = total_quantity
         customer["total_purchase_amount"] = round(total_amount_with_tax, 2)
         
-        # Convert order_status to payment_status: "1" = Paid, "0" = Unpaid
-        order_status = customer.get("latest_order_status", "0")
-        customer["payment_status"] = "Paid" if str(order_status) == "1" else "Unpaid"
+        # ✅ Use payment_status from the latest order
+        # If payment_status is not set (old orders), default based on order_status
+        payment_status = customer.get("latest_payment_status")
+        if payment_status:
+            # "Paid" stays "Paid", "Pay Later" becomes "Unpaid" for display
+            customer["payment_status"] = "Paid" if payment_status == "Paid" else "Unpaid"
+        else:
+            # Fallback for old orders without payment_status field
+            order_status = customer.get("latest_order_status", "0")
+            customer["payment_status"] = "Paid" if str(order_status) == "1" else "Unpaid"
         
         # ✅ Set payment_date only if status is Paid, otherwise None
         if customer["payment_status"] == "Paid":
@@ -113,6 +124,8 @@ async def get_all_customers(store_id: Optional[str] = None) -> List[CustomerMode
         # Remove temporary fields
         customer.pop("all_products", None)
         customer.pop("latest_order_status", None)
+        customer.pop("latest_payment_status", None)
+        # Keep latest_order_id for Mark as Paid functionality
         
         # Ensure datetime objects
         if customer.get("first_order_date"):
@@ -167,6 +180,7 @@ async def get_customer_by_id(customer_id: str, store_id: Optional[str] = None) -
                 "first_order_date": {"$min": "$created_at"},
                 "last_order_date": {"$max": "$created_at"},
                 "latest_order_status": {"$first": "$order_status"},  # Get latest order status
+                "latest_payment_status": {"$first": "$payment_status"},  # ✅ Get payment status from latest order
                 "payment_date": {"$max": "$sold_at"},  # ✅ Get most recent payment date
                 "all_products": {"$push": "$products"}
             }
@@ -210,9 +224,16 @@ async def get_customer_by_id(customer_id: str, store_id: Optional[str] = None) -
     customer["total_purchase_quantity"] = total_quantity
     customer["total_purchase_amount"] = round(total_amount_with_tax, 2)
     
-    # Convert order_status to payment_status: "1" = Paid, "0" = Unpaid
-    order_status = customer.get("latest_order_status", "0")
-    customer["payment_status"] = "Paid" if str(order_status) == "1" else "Unpaid"
+    # ✅ Use payment_status from the latest order
+    # If payment_status is not set (old orders), default based on order_status
+    payment_status = customer.get("latest_payment_status")
+    if payment_status:
+        # "Paid" stays "Paid", "Pay Later" becomes "Unpaid" for display
+        customer["payment_status"] = "Paid" if payment_status == "Paid" else "Unpaid"
+    else:
+        # Fallback for old orders without payment_status field
+        order_status = customer.get("latest_order_status", "0")
+        customer["payment_status"] = "Paid" if str(order_status) == "1" else "Unpaid"
     
     # ✅ Set payment_date only if status is Paid, otherwise None
     if customer["payment_status"] == "Paid":
@@ -222,6 +243,8 @@ async def get_customer_by_id(customer_id: str, store_id: Optional[str] = None) -
     
     customer.pop("all_products", None)
     customer.pop("latest_order_status", None)
+    customer.pop("latest_payment_status", None)
+    # Keep latest_order_id for Mark as Paid functionality
     
     # Get order history - fetch ALL orders with this phone number
     orders_cursor = sales_orders_collection.find(match_filter).sort("created_at", -1)
@@ -275,6 +298,8 @@ async def search_customers(query: str, store_id: Optional[str] = None) -> List[C
                 "first_order_date": {"$min": "$created_at"},
                 "last_order_date": {"$max": "$created_at"},
                 "latest_order_status": {"$first": "$order_status"},  # Get latest order status
+                "latest_payment_status": {"$first": "$payment_status"},  # ✅ Get payment status from latest order
+                "latest_order_id": {"$first": "$order_id"},  # ✅ Get latest order ID for mark as paid
                 "payment_date": {"$max": "$sold_at"},  # ✅ Get most recent payment date
                 "all_products": {"$push": "$products"}
             }
@@ -294,6 +319,8 @@ async def search_customers(query: str, store_id: Optional[str] = None) -> List[C
                 "first_order_date": 1,
                 "last_order_date": 1,
                 "latest_order_status": 1,
+                "latest_payment_status": 1,
+                "latest_order_id": 1,
                 "payment_date": 1,
                 "all_products": 1
             }
@@ -334,24 +361,27 @@ async def search_customers(query: str, store_id: Optional[str] = None) -> List[C
         customer["total_purchase_quantity"] = total_quantity
         customer["total_purchase_amount"] = round(total_amount_with_tax, 2)
         
-        # Convert order_status to payment_status: "1" = Paid, "0" = Unpaid
+    # ✅ Use payment_status from the latest order
+    # If payment_status is not set (old orders), default based on order_status
+    payment_status = customer.get("latest_payment_status")
+    if payment_status:
+        # "Paid" stays "Paid", "Pay Later" becomes "Unpaid" for display
+        customer["payment_status"] = "Paid" if payment_status == "Paid" else "Unpaid"
+    else:
+        # Fallback for old orders without payment_status field
         order_status = customer.get("latest_order_status", "0")
         customer["payment_status"] = "Paid" if str(order_status) == "1" else "Unpaid"
-        
-        # ✅ Set payment_date only if status is Paid, otherwise None
-        if customer["payment_status"] == "Paid":
-            customer["payment_date"] = customer.get("payment_date", None)
-        else:
-            customer["payment_date"] = None
-        
-        customer.pop("all_products", None)
-        customer.pop("latest_order_status", None)
-        
-        customer["created_at"] = customer.get("first_order_date", datetime.utcnow())
-        customer["updated_at"] = customer.get("last_order_date", datetime.utcnow())
     
-    return [CustomerModel(**customer) for customer in customers]
-
+    # ✅ Set payment_date only if status is Paid, otherwise None
+    if customer["payment_status"] == "Paid":
+        customer["payment_date"] = customer.get("payment_date", None)
+    else:
+        customer["payment_date"] = None
+    
+    customer.pop("all_products", None)
+    customer.pop("latest_order_status", None)
+    customer.pop("latest_payment_status", None)
+    # Keep latest_order_id for Mark as Paid functionality
 
 async def sync_order_to_customer_history(order_id: str, store_id: str):
     """
