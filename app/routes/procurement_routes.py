@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, HTTPException, Path, Request, Body, Query
+from fastapi import APIRouter, HTTPException, Path, Request, Body, Query, BackgroundTasks
 from typing import Dict
 
 from jose import JWTError
@@ -529,7 +529,7 @@ async def validate_purchase_order_preview(
 
 @router.post("/purchase-orders/validate/submit")
 async def submit_purchase_order(
-    request: Request, data: PurchaseOrderSubmitRequest
+    request: Request, data: PurchaseOrderSubmitRequest, background_tasks: BackgroundTasks
 ):
     user = request.state.user
     if user.get("role") != "procurement":
@@ -539,5 +539,5 @@ async def submit_purchase_order(
     org_id = user.get("org_id")
 
     return await procurement_validation_services.submit_purchase_order(
-        data, store_id, org_id
+        data, store_id, org_id, background_tasks
     )

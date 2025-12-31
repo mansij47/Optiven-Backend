@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi import APIRouter, HTTPException, Request, Query, BackgroundTasks
 from app.models.sales_model import EditOrderModel, ProductDetails, ReturnOrderRequest, ReturnedOrderModel, SalesOrderDetails, SalesOrderModel, LoginModel, RequestOrderModel, SendToProcurement, SellOrderPayload
 from app.services import sales_get_update_services
 from typing import Any, Optional
@@ -89,7 +89,7 @@ async def edit_order(order_id: str, order: EditOrderModel, request: Request):
 
 #order sold successfully notification
 @router.put("/orders/received/{order_id}/sell") 
-async def mark_order_as_sold(order_id: str, payload: SellOrderPayload, request: Request):
+async def mark_order_as_sold(order_id: str, payload: SellOrderPayload, request: Request, background_tasks: BackgroundTasks):
     user = request.state.user
 
     if not user or user.get("role") != "sales":
@@ -105,7 +105,8 @@ async def mark_order_as_sold(order_id: str, payload: SellOrderPayload, request: 
         quantity=payload.quantity,
         price=payload.price,
         tax=payload.tax,
-        payment_status=payload.payment_status  # ✅ Add payment status
+        payment_status=payload.payment_status,  # ✅ Add payment status
+        background_tasks=background_tasks  # ✅ Pass background tasks
     )
 
     if updated_count == 0:
@@ -330,8 +331,8 @@ async def create_return_order(data: ReturnOrderRequest, request: Request):
 @router.get("/orders/returns", tags=["Sales"]) 
 async def get_all_return_orders(request: Request):
     user = request.state.user
-    if not user or user.get("role") != "sales":
-        raise HTTPException(status_code=403, detail="Forbidden: Sales access required.")
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
     
     store_id = user.get("store_id")
     if not store_id:

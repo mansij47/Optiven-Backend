@@ -3,12 +3,13 @@ from app.db import db
 from app.models.sales_model import ProductDetails, SalesOrderDetails, SalesProductItem
 from app.services.sales_add_raise_services import fetch_inventory_details
 from app.utils.tax_utils import calculate_product_total_with_tax
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from app.utils.sales_utils import build_product_detail, parse_return_status, parse_status_string
 from app.utils.sold_order_pdf_utils import generate_sold_order_pdf
 from bson.son import SON
 from datetime import datetime,timezone
+from app.utils.inventory_sync import sync_inventory_on_change
 
 sales_orders_collection = db["SalesOrders"]
 requested_orders_collection = db["RequestedOrders"]
@@ -379,7 +380,7 @@ async def mark_order_status_as_sold(order_id: str, store_id: str):
     )
     return result.modified_count
 
-async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None, price: float = None, tax: float = None, payment_status: str = "Paid"):
+async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None, price: float = None, tax: float = None, payment_status: str = "Paid", background_tasks: BackgroundTasks = None):
     order = await fetch_order_and_validate(order_id, store_id)
     
     # ✅ If quantity is provided from popup, update the order's quantity before processing
@@ -391,9 +392,15 @@ async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None,
     
     # Update the order products with item_ids information
     updated_products = []
+    affected_product_ids = []  # Track products that need inventory sync
+    
     for product in order.get("products", []):
         product_id = product.get("product_id")
         product_copy = product.copy()
+        
+        # Track products for inventory sync
+        if product_id:
+            affected_product_ids.append(product_id)
         
         # Update with edited values if provided
         if quantity is not None:
@@ -430,6 +437,10 @@ async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None,
             }
         }
     )
+    
+    # ✅ EVENT-DRIVEN: Sync inventory for all affected products (with background tasks)
+    for product_id in affected_product_ids:
+        await sync_inventory_on_change(product_id, store_id, background_tasks)
     
     # ✅ AUTO-SYNC: Add this sold order to ProfitOrders collection (real-time)
     try:

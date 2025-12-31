@@ -1,48 +1,83 @@
 from fastapi import APIRouter, HTTPException, Request
-from app.services import vendor_service as svc
-from app.utils.service_utils import delete_return_to_vendor, delete_sales_order
+from app.db import db
+from app.utils.service_utils import delete_by_object_id
 
 router = APIRouter()
 
-# delete by objectID  for vendor (optional)
-@router.delete("/{vendor_id}")
-async def delete_vendor(vendor_id: str, request: Request):
+# Common delete route for any collection
+@router.delete("/delete/{collection_name}/{object_id}")
+async def delete_document(collection_name: str, object_id: str, request: Request):
+    """
+    Common delete endpoint for any collection.
+    
+    Args:
+        collection_name: Name of the collection (e.g., 'Vendors', 'SalesOrders', 'ReturnToVendor')
+        object_id: ObjectId of the document to delete
+    
+    Usage:
+        DELETE /delete/Vendors/{vendor_id}
+        DELETE /delete/SalesOrders/{order_id}
+        DELETE /delete/ReturnToVendor/{return_id}
+    """
     user = request.state.user
-    if not user or user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Unauthorized")
-
-    deleted_count = await svc.delete_vendor(vendor_id)
+    
+    # Role-based access control
+    collection_permissions = {
+        "Admins": ["admin"],
+        "Categories": ["admin", "procurement"],
+        "Contracts": ["procurement", "admin"],
+        "CustomerHistory": ["sales", "admin"],
+        "Help": ["admin"],
+        "Inventory": ["admin", "procurement", "sales"],
+        "LossOrders": ["sales", "admin"],
+        "LossProducts": ["procurement", "admin"],
+        "NewInventory": ["admin", "procurement"],
+        "Notifications": ["admin"],
+        "PasswordResets": ["admin"],
+        "ProductItems": ["procurement", "admin"],
+        "ProfitOrders": ["sales", "admin"],
+        "PurchaseOrders": ["procurement", "admin"],
+        "RequestedOrders": ["procurement", "admin"],
+        "ReturnOrders": ["sales", "admin"],
+        "ReturnToVendor": ["procurement", "admin"],
+        "SalesOrders": ["sales", "admin"],
+        "Vendors": ["admin", "procurement"],
+    }
+    
+    # Check if collection exists in permissions
+    if collection_name not in collection_permissions:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid collection name: {collection_name}"
+        )
+    
+    # Check user role permission
+    allowed_roles = collection_permissions[collection_name]
+    if not user or user.get("role") not in allowed_roles:
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Forbidden: {', '.join(allowed_roles)} access required."
+        )
+    
+    # Get the collection from db
+    collection = getattr(db, collection_name, None)
+    if collection is None:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Collection {collection_name} not found in database"
+        )
+    
+    # Delete the document
+    deleted_count = await delete_by_object_id(collection, object_id)
+    
     if deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Vendor not found")
-    return {"message": "Vendor deleted successfully"}
-
-# delete api (common)
-@router.delete("/return-to-vendor/{id}")
-async def delete_return_to_vendor_route(id: str, request: Request):
-    user = request.state.user
-
-    # Role check
-    if not user or user.get("role") not in ["procurement", "admin"]:
-        raise HTTPException(status_code=403, detail="Forbidden: Procurement or Admin access required.")
-
-    deleted_count = await delete_return_to_vendor(id)
-
-    if deleted_count == 0:
-        raise HTTPException(status_code=404, detail="ReturnToVendor record not found or invalid ID.")
-
-    return {"message": "ReturnToVendor deleted successfully", "id": id}
-
-@router.delete("/sales-orders/{id}")
-async def delete_sales_order_route(id: str, request: Request):
-    user = request.state.user
-
-    # Role check
-    if not user or user.get("role") not in ["sales", "admin"]:
-        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
-
-    deleted_count = await delete_sales_order(id)
-
-    if deleted_count == 0:
-        raise HTTPException(status_code=404, detail="SalesOrder record not found or invalid ID.")
-
-    return {"message": "SalesOrder deleted successfully", "id": id}
+        raise HTTPException(
+            status_code=404, 
+            detail=f"{collection_name} record not found or invalid ID."
+        )
+    
+    return {
+        "message": f"{collection_name} deleted successfully", 
+        "collection": collection_name,
+        "id": object_id
+    }

@@ -366,97 +366,46 @@ async def create_product_items(product_id: str, quantity: int, product_data: dic
 
 # ✅ 2. Get All Products with Items Count
 async def get_all_products(store_id: str):
-    """
-    Retrieves all products with their item count.
-    Shows hierarchical structure: Product → Items
-    Product quantity is always synced with actual item count.
-    Sorted by: Stock-out/Low Stock first, then by created_at descending.
-    """
     try:
-        products_cursor = (
-            db["Inventory"].find({"store_id": store_id}, {"_id": 0})
-            .sort("created_at", -1)  # Sort by creation time (newest first)
-        )
+        products_cursor = db.Inventory.find(
+            {"store_id": store_id},
+            {"_id": 0}
+        ).sort("created_at", -1)
 
         products = []
-        low_stock_checks = []  # Collect products that need low stock checking
-        
+
         async for product in products_cursor:
-            # Get total items count for this product (this is the real quantity)
-            items_count = await db.ProductItems.count_documents({
-                "product_id": product.get("product_id"),
-                "store_id": store_id
-            })
+            quantity = product.get("quantity", 0)
+            min_stock = product.get("min_stock", 4)
 
-            # Get available items count (not sold/damaged)
-            available_items = await db.ProductItems.count_documents({
-                "product_id": product.get("product_id"),
-                "store_id": store_id,
-                "status": "available"
-            })
-            
-            # ✅ Calculate average price from all items
-            average_price = await calculate_average_price(product.get("product_id"), store_id)
-            
-            # ✅ Calculate average vendor tax from all items
-            average_vendor_tax = await calculate_average_vendor_tax(product.get("product_id"), store_id)
+            # ✅ Compute status in memory
+            if quantity == 0:
+                status = "Stock-out"
+            elif quantity <= min_stock:
+                status = "Low Stock"
+            else:
+                status = "Stock-in"
 
-            # ✅ Quantity is ALWAYS mapped to available ProductItems count
-            product["quantity"] = available_items  # Use available items, not total
-            
-            # ✅ Update quantity in database
-            await db.Inventory.update_one(
-                {"product_id": product.get("product_id"), "store_id": store_id},
-                {"$set": {"quantity": available_items, "updated_at": datetime.utcnow()}}
-            )
-            
-            # ✅ Collect products for low stock checking (batch process later)
-            low_stock_checks.append((product.get("product_id"), store_id, available_items, product.get("min_stock", 4), product.get("status", "")))
-            
-            product["average_price"] = average_price
-            product["vendor_tax"] = average_vendor_tax  # Add vendor tax to product
-            product["total_items"] = items_count
-            product["available_items"] = available_items
-            product.pop("_id", None)
-
+            product["status"] = status
             products.append(product)
 
-        # ✅ Batch process low stock checks (only once per API call)
-        for product_id, store_id, quantity, min_stock, current_status in low_stock_checks:
-            await check_and_notify_low_stock(product_id, store_id)
-        
-        # ✅ Refresh product statuses after low stock checks
-        for product in products:
-            updated_product = await db.Inventory.find_one(
-                {"product_id": product.get("product_id"), "store_id": store_id},
-                {"_id": 0, "status": 1}
+        # ✅ Sort stock-out & low stock first
+        products.sort(
+            key=lambda p: (
+                1 if p["status"] in ["Stock-out", "Low Stock"] else 2,
+                -(p.get("created_at").timestamp())
             )
-            if updated_product:
-                product["status"] = updated_product.get("status", "Stock-in") if product["quantity"] > 1 else "Stock-out"
-
-        # ✅ Sort products: Stock-out and Low Stock at the top, then by created_at
-        def sort_key(product):
-            status = product.get("status", "Stock-in")
-            created_at = product.get("created_at", datetime.min)
-            
-            # Priority: 1 = Stock-out/Low Stock (top), 2 = Stock-in (bottom)
-            if status in ["Stock-out", "Low Stock"]:
-                priority = 1
-            else:
-                priority = 2
-            
-            return (priority, -created_at.timestamp() if isinstance(created_at, datetime) else 0)
-        
-        products.sort(key=sort_key)
+        )
 
         return {
             "total_count": len(products),
             "store_id": store_id,
-            "products": products,
+            "products": products
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving products: {str(e)}")
+        raise HTTPException(500, f"Error: {str(e)}")
+
 
 
 # ✅ 3. Get Product by ID with All Items
