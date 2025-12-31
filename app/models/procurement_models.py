@@ -60,7 +60,7 @@ class RequestedOrderUpdate(BaseModel):
 #Add Contracts
 class Contract(BaseModel):
     contract_id: Optional[str] = None
-    request_id: str
+    request_id: Optional[str] = None  # ✅ Optional to support direct PDF uploads
     vendor_name: str
     vendor_store_name: Optional[str] = None
     vendor_email: Optional[str] = None
@@ -85,9 +85,9 @@ class Contract(BaseModel):
     return_conditions: Optional[List[str]] = None
     is_damage_returnable: Optional[bool] = None
     type: Optional[str] = "order"  # "order" or "preorder"
-    status: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    status: Optional[str] = "pending"  # ✅ Made optional with default
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
     
 #Update Contracts
 class ContractUpdate(BaseModel):

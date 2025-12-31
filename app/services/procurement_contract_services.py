@@ -36,13 +36,16 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
         raise HTTPException(status_code=400, detail="Contract with this ID already exists.")
 
     # ✅ Check for existing active contract with same vendor and product for this request
-    duplicate_contract = await contracts_collection.find_one({
-        "request_id": contract_data.request_id,
-        "vendor_name": contract_data.vendor_name,
-        "product_name": contract_data.product_name,
-        "store_id": store_id,
-        "status": {"$in": ["pending", "accept"]}  # Check for active contracts only
-    })
+    # Only check for duplicates if request_id is provided (not for direct PDF uploads)
+    duplicate_contract = None
+    if contract_data.request_id:
+        duplicate_contract = await contracts_collection.find_one({
+            "request_id": contract_data.request_id,
+            "vendor_name": contract_data.vendor_name,
+            "product_name": contract_data.product_name,
+            "store_id": store_id,
+            "status": {"$in": ["pending", "accept"]}  # Check for active contracts only
+        })
     
     # ✅ If contract exists, UPDATE quantity instead of creating duplicate
     if duplicate_contract:
@@ -215,10 +218,18 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
 
 #List of Contracts
 async def get_contracts_by_request_id(request_id: str, store_id: str):
-    contracts = await contracts_collection.find(
-        {"request_id": request_id, "store_id": store_id},
-        {"_id": 0}  # Exclude MongoDB's internal _id field
-    ).to_list(length=None)
+    # ✅ If request_id is "all" or "undefined", return all contracts for the store
+    if request_id in ["all", "undefined", "null", None]:
+        contracts = await contracts_collection.find(
+            {"store_id": store_id},
+            {"_id": 0}
+        ).to_list(length=None)
+    else:
+        # Return contracts for specific request_id
+        contracts = await contracts_collection.find(
+            {"request_id": request_id, "store_id": store_id},
+            {"_id": 0}
+        ).to_list(length=None)
 
     if not contracts:
         return {
