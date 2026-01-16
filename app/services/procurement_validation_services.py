@@ -232,6 +232,15 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             existing_quantity = existing_product.get("quantity", 0)
             new_quantity = existing_quantity + data.received_quantity
             
+            # ✅ Get seller returnability info from purchase order
+            seller_return_conditions = base_order.get("return_conditions", [])
+            is_seller_returnable = base_order.get("returnable", False)
+            
+            # ✅ Auto-correct: If seller_return_conditions exist but is_seller_returnable is False, set it to True
+            if seller_return_conditions and len(seller_return_conditions) > 0 and not is_seller_returnable:
+                is_seller_returnable = True
+                print(f"[DEBUG] Auto-corrected product-level is_seller_returnable to True for existing product based on conditions: {seller_return_conditions}")
+            
             # Update existing product (average_price will be calculated after items are added)
             await db.Inventory.update_one(
                 {"product_id": product_id, "store_id": store_id},
@@ -241,6 +250,12 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                         "min_stock": data.min_quantity or existing_product.get("min_stock", 4),
                         "status": "Stock-in",
                         "type": "order",  # ✅ Set to 'order' when validated and added to inventory
+                        # ✅ Update seller returnability fields
+                        "is_seller_returnable": is_seller_returnable,
+                        "seller_return_conditions": seller_return_conditions,
+                        # ✅ Update consumer returnability fields
+                        "is_consumer_returnable": data.is_consumer_returnable if hasattr(data, 'is_consumer_returnable') else existing_product.get("is_consumer_returnable", False),
+                        "consumer_return_conditions": data.consumer_return_conditions if hasattr(data, 'consumer_return_conditions') else existing_product.get("consumer_return_conditions", []),
                         "updated_at": datetime.utcnow()
                     }
                 }
@@ -250,6 +265,15 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
         else:
             # Product doesn't exist - CREATE new one
             product_id = await _next_id(db.Inventory, "product_id", "PROD", store_id)
+            
+            # ✅ Get seller returnability info from purchase order
+            seller_return_conditions = base_order.get("return_conditions", [])
+            is_seller_returnable = base_order.get("returnable", False)
+            
+            # ✅ Auto-correct: If seller_return_conditions exist but is_seller_returnable is False, set it to True
+            if seller_return_conditions and len(seller_return_conditions) > 0 and not is_seller_returnable:
+                is_seller_returnable = True
+                print(f"[DEBUG] Auto-corrected product-level is_seller_returnable to True based on conditions: {seller_return_conditions}")
             
             # Create Product using admin model (clean structure) 
             product_dict = {
@@ -267,6 +291,12 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 "min_stock": data.min_quantity or 4,
                 "status": "Stock-in",
                 "type": "order",  # ✅ Set to 'order' when validated and added to inventory
+                # ✅ Add seller returnability fields to product
+                "is_seller_returnable": is_seller_returnable,
+                "seller_return_conditions": seller_return_conditions,
+                # ✅ Add consumer returnability fields
+                "is_consumer_returnable": data.is_consumer_returnable if hasattr(data, 'is_consumer_returnable') else False,
+                "consumer_return_conditions": data.consumer_return_conditions if hasattr(data, 'consumer_return_conditions') else [],
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow()
             }
@@ -333,6 +363,11 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 item_consumer_return_conditions = getattr(item_detail, "consumer_return_conditions", data.consumer_return_conditions or [])
                 item_is_seller_returnable = getattr(item_detail, "is_seller_returnable", base_order.get("returnable", False))
                 item_seller_return_conditions = getattr(item_detail, "seller_return_conditions", base_order.get("return_conditions", []))
+            
+            # ✅ Auto-correct: If seller_return_conditions exist but is_seller_returnable is False, set it to True
+            if item_seller_return_conditions and len(item_seller_return_conditions) > 0 and not item_is_seller_returnable:
+                item_is_seller_returnable = True
+                print(f"[DEBUG] Auto-corrected is_seller_returnable to True for item based on conditions: {item_seller_return_conditions}")
             
             # Get unit_price for the item
             unit_price_value = item_detail.get("unit_price") if isinstance(item_detail, dict) else item_detail.unit_price
@@ -401,6 +436,10 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                     consumer_return_conditions = getattr(item_detail, "consumer_return_conditions", data.consumer_return_conditions or [])
                     is_seller_returnable = getattr(item_detail, "is_seller_returnable", False)
                     seller_return_conditions = getattr(item_detail, "seller_return_conditions", [])
+                
+                # ✅ Auto-correct: If seller_return_conditions exist but is_seller_returnable is False, set it to True
+                if seller_return_conditions and len(seller_return_conditions) > 0 and not is_seller_returnable:
+                    is_seller_returnable = True
                 
                 # Create ProductItem with full vendor and warranty info
                 loss_item_data = {
@@ -478,6 +517,10 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                     consumer_return_conditions = getattr(item_detail, "consumer_return_conditions", data.consumer_return_conditions or [])
                     is_seller_returnable = getattr(item_detail, "is_seller_returnable", base_order.get("returnable", False))
                     seller_return_conditions = getattr(item_detail, "seller_return_conditions", base_order.get("return_conditions", []))
+                
+                # ✅ Auto-correct: If seller_return_conditions exist but is_seller_returnable is False, set it to True
+                if seller_return_conditions and len(seller_return_conditions) > 0 and not is_seller_returnable:
+                    is_seller_returnable = True
                 
                 # Create ProductItem with full vendor and warranty info
                 return_item_data = {

@@ -25,3 +25,29 @@ async def delete_by_object_id(collection, object_id: str) -> int:
     result = await collection.delete_one({"_id": ObjectId(object_id)})
     return result.deleted_count
 
+
+async def delete_by_store_id(collection, store_id: str) -> int:
+    """
+    Delete all documents from a collection that belong to a specific store.
+    
+    Args:
+        collection: MongoDB collection object (e.g., db.SalesOrders, db.Inventory, db.PurchaseOrders)
+        store_id: The store ID to filter by (e.g., "St258")
+    
+    Returns:
+        int: deleted_count (number of documents deleted)
+    
+    Usage:
+        from app.db import db
+        # Delete all sales orders for store St258
+        count = await delete_by_store_id(db.SalesOrders, "St258")
+        
+        # Delete all inventory items for store St100
+        count = await delete_by_store_id(db.Inventory, "St100")
+        
+        # Delete all purchase orders for store St258
+        count = await delete_by_store_id(db.PurchaseOrders, "St258")
+    """
+    result = await collection.delete_many({"store_id": store_id})
+    return result.deleted_count
+

@@ -22,7 +22,9 @@ async def generate_order_id():
 
 def build_product_detail(inventory_item: dict, product_id: str, unit_price: float,
                          product_tax: float, order_quantity: int, inventory_quantity: int, 
-                         consumer_return_conditions: list, selling_price: float = None):
+                         consumer_return_conditions: list, selling_price: float = None,
+                         seller_return_conditions: list = None, is_seller_returnable: bool = False,
+                         is_consumer_returnable: bool = False):
     # ✅ Use selling_price for customer orders (what customer pays), fallback to unit_price if not provided
     price_for_customer = selling_price if selling_price and selling_price > 0 else unit_price
     
@@ -32,6 +34,9 @@ def build_product_detail(inventory_item: dict, product_id: str, unit_price: floa
     # Set default return conditions if none provided
     default_conditions = ["Wrong product", "Damaged on arrival", "Quality issues"]
     return_conditions = consumer_return_conditions if consumer_return_conditions else default_conditions
+    
+    # ✅ Default seller return conditions if none provided
+    seller_conditions = seller_return_conditions if seller_return_conditions else []
 
     product_detail = {
         "product_id": product_id,
@@ -43,7 +48,11 @@ def build_product_detail(inventory_item: dict, product_id: str, unit_price: floa
         "inventory_quantity": inventory_quantity,
         "tax": product_tax,
         "unit": inventory_item.get("unit", ""),
-        "consumer_return_conditions": return_conditions}
+        "consumer_return_conditions": return_conditions,
+        "seller_return_conditions": seller_conditions,
+        "is_seller_returnable": is_seller_returnable,
+        "is_consumer_returnable": is_consumer_returnable
+    }
 
     return product_detail, line_total + tax
 
@@ -178,6 +187,22 @@ async def fetch_inventory_details(product_id: str, store_id: str):
     })
     
     consumer_return_conditions = inventory_item.get("consumer_return_conditions", [])
+    
+    # ✅ Include seller returnability fields for proper return handling
+    seller_return_conditions = inventory_item.get("seller_return_conditions", [])
+    is_seller_returnable = inventory_item.get("is_seller_returnable", False)
+    
+    # ✅ Auto-correct: if seller_return_conditions exist but flag is False, correct it
+    if seller_return_conditions and not is_seller_returnable:
+        is_seller_returnable = True
+        print(f"[AUTO-CORRECT] Product {product_id}: seller_return_conditions exist but is_seller_returnable was False. Setting to True.")
+    
+    is_consumer_returnable = inventory_item.get("is_consumer_returnable", False)
+    
+    # ✅ Auto-correct: if consumer_return_conditions exist but flag is False, correct it
+    if consumer_return_conditions and not is_consumer_returnable:
+        is_consumer_returnable = True
+        print(f"[AUTO-CORRECT] Product {product_id}: consumer_return_conditions exist but is_consumer_returnable was False. Setting to True.")
 
     return {
         "inventory_item": inventory_item,
@@ -185,7 +210,10 @@ async def fetch_inventory_details(product_id: str, store_id: str):
         "average_selling_price": average_selling_price,
         "product_tax": product_tax,
         "inventory_quantity": inventory_quantity,
-        "consumer_return_conditions": consumer_return_conditions
+        "consumer_return_conditions": consumer_return_conditions,
+        "seller_return_conditions": seller_return_conditions,
+        "is_seller_returnable": is_seller_returnable,
+        "is_consumer_returnable": is_consumer_returnable
     }
 
 # --- Helper function to generate new return_id ---
@@ -240,13 +268,29 @@ async def enrich_products(products: list, return_quantity: int, reason: str, ord
         product_return_conditions = product.get("consumer_return_conditions", [])
         is_customer_returnable = product.get("is_consumer_returnable", False)
         
+        # ✅ Get seller returnability from the SOLD ORDER (what was valid at time of sale)
+        seller_return_conditions = product.get("seller_return_conditions", [])
+        is_seller_returnable = product.get("is_seller_returnable", False)
+        
         # Only fallback to inventory if sold order doesn't have the data
         if not product_return_conditions:
             product_return_conditions = inventory.get("consumer_return_conditions", [])
         if not is_customer_returnable:
             is_customer_returnable = inventory.get("is_consumer_returnable", False)
+        
+        # ✅ Fallback to inventory for seller returnability if not in sold order
+        if not seller_return_conditions:
+            seller_return_conditions = inventory.get("seller_return_conditions", [])
+        if not is_seller_returnable:
+            is_seller_returnable = inventory.get("is_seller_returnable", False)
+        
+        # ✅ Auto-correct: if seller_return_conditions exist but flag is False, correct it
+        if seller_return_conditions and not is_seller_returnable:
+            is_seller_returnable = True
+            print(f"[AUTO-CORRECT in enrich_products] Product {product_id}: seller_return_conditions exist but is_seller_returnable was False. Setting to True.")
 
         print(f"Checking {product_id}: is_customer_returnable={is_customer_returnable}, conditions={product_return_conditions}, reason={reason}")
+        print(f"[DEBUG] Seller returnability: is_seller_returnable={is_seller_returnable}, seller_conditions={seller_return_conditions}")
 
         # Validate return eligibility based on conditions from sold order
         if not product_return_conditions:
@@ -308,8 +352,8 @@ async def enrich_products(products: list, return_quantity: int, reason: str, ord
                         "warranty_unit": item.get("warranty_unit", "months"),
                         "is_consumer_returnable": item.get("is_consumer_returnable", is_customer_returnable),
                         "consumer_return_conditions": item.get("consumer_return_conditions", product_return_conditions),
-                        "is_seller_returnable": item.get("is_seller_returnable", inventory.get("is_seller_returnable", False)),
-                        "seller_return_conditions": item.get("seller_return_conditions", inventory.get("seller_return_conditions", []))
+                        "is_seller_returnable": item.get("is_seller_returnable", is_seller_returnable),  # ✅ Use from sold order
+                        "seller_return_conditions": item.get("seller_return_conditions", seller_return_conditions)  # ✅ Use from sold order
                     })
 
         # ✅ Calculate tax-inclusive return amount using SELLING_PRICE (what customer paid)
@@ -333,8 +377,8 @@ async def enrich_products(products: list, return_quantity: int, reason: str, ord
             "original_quantity": product.get("order_quantity", return_quantity),
             "is_customer_returnable": is_customer_returnable,
             "consumer_return_conditions": product_return_conditions,  # ✅ Use conditions from sold order
-            "is_seller_returnable": inventory.get("is_seller_returnable", False),
-            "seller_return_conditions": inventory.get("seller_return_conditions", []),
+            "is_seller_returnable": is_seller_returnable,  # ✅ Use from sold order (with fallback and auto-correct)
+            "seller_return_conditions": seller_return_conditions,  # ✅ Use from sold order (with fallback)
             "return_reason": reason
         }
         

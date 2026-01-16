@@ -269,6 +269,7 @@ class ReturnOrderDetail(BaseModel):
     reason: str
     returned_amount: Optional[float] = None
     store_id: str
+    destination: Optional[str] = None  # ✅ Track where the return went (Inventory, LossOrders, ReturnToVendor)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

@@ -12,6 +12,7 @@ class ExtractionType(str, Enum):
     ITEMS = "items"
     PAYMENT = "payment"
     DATES = "dates"
+    CUSTOMER_ITEMS = "customer_items"  # Only customer + items (for sales quotations)
 
 
 class VendorModel(BaseModel):

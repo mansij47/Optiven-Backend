@@ -5,9 +5,49 @@ from pymongo import ReturnDocument
 from app.models.sales_model import ReturnOrderRequest, SendToProcurement
 from app.utils.sales_utils import enrich_products, fetch_inventory_details, generate_customer_id, generate_order_id, build_product_detail, generate_request_id, generate_return_id
 
+
+async def find_existing_customer(customer_name: str, customer_phone: str = None, customer_email: str = None, store_id: str = None):
+    """
+    Check if a customer already exists based on email or phone.
+    Priority: Email > Phone
+    Returns: customer_id if found, None otherwise
+    """
+    # Normalize inputs
+    email = customer_email.strip().lower() if customer_email else None
+    phone = customer_phone.strip() if customer_phone else None
+    
+    # Try email first (most reliable for unique identification)
+    if email:
+        existing = await db.SalesOrders.find_one(
+            {"customer_email": email, "store_id": store_id},
+            {"customer_id": 1, "_id": 0}
+        )
+        if existing:
+            return existing.get("customer_id")
+    
+    # Try phone as fallback
+    if phone:
+        existing = await db.SalesOrders.find_one(
+            {"customer_phone": phone, "store_id": store_id},
+            {"customer_id": 1, "_id": 0}
+        )
+        if existing:
+            return existing.get("customer_id")
+    
+    return None
+
+
 async def add_sales_order(order_data: dict, store_id: str):
-    # Generate customer_id
-    customer_id = await generate_customer_id()
+    # ✅ Check for existing customer before generating new ID
+    existing_customer_id = await find_existing_customer(
+        customer_name=order_data.get("customer_name"),
+        customer_phone=order_data.get("customer_phone"),
+        customer_email=order_data.get("customer_email"),
+        store_id=store_id
+    )
+    
+    # Use existing customer_id or generate new one
+    customer_id = existing_customer_id if existing_customer_id else await generate_customer_id()
 
     # Process products and detect preorder/stock-out condition
     final_products, subtotal, stock_out_or_preorder = await process_products(order_data.get("products", []), store_id)
@@ -27,6 +67,10 @@ async def add_sales_order(order_data: dict, store_id: str):
         order_data["type"] = "order"
         order_data["status"] = "Stock-in"
     order_data["store_id"] = store_id
+    
+    # ✅ Ensure currency is preserved, default to INR if not provided
+    if "currency" not in order_data or not order_data["currency"]:
+        order_data["currency"] = "INR"
 
     # Fix: Collect return conditions from all products
     order_data["consumer_return_conditions"] = [
@@ -92,7 +136,10 @@ async def process_products(products: list, store_id: str):
                 order_quantity=order_quantity,
                 inventory_quantity=inventory_data["inventory_quantity"],
                 consumer_return_conditions=inventory_data["consumer_return_conditions"],
-                selling_price=inventory_data["average_selling_price"]  # Pass customer-paid price
+                selling_price=inventory_data["average_selling_price"],  # Pass customer-paid price
+                seller_return_conditions=inventory_data["seller_return_conditions"],
+                is_seller_returnable=inventory_data["is_seller_returnable"],
+                is_consumer_returnable=inventory_data["is_consumer_returnable"]
             )
 
             # Check inventory status and quantity

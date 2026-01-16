@@ -243,6 +243,13 @@ def generate_sold_order_pdf(order_data: Dict[str, Any], output_dir: str = None) 
     c.drawString(label_x, pricing_y, "Total Tax:")
     c.drawRightString(value_x, pricing_y, f"Rs. {total_tax_amount:.2f}")
     
+    # -------- Shipping Charges --------
+    shipping_charges = float(order_data.get("shipping_charges", 0))
+    if shipping_charges > 0:
+        pricing_y -= 15
+        c.drawString(label_x, pricing_y, "Shipping Charges:")
+        c.drawRightString(value_x, pricing_y, f"Rs. {shipping_charges:.2f}")
+    
     # -------- Grand Total --------
     pricing_y -= 5
     c.setLineWidth(0.5)
@@ -250,7 +257,7 @@ def generate_sold_order_pdf(order_data: Dict[str, Any], output_dir: str = None) 
     pricing_y -= 15
     
     c.setFont("Helvetica-Bold", 12)
-    grand_total = subtotal + total_tax_amount
+    grand_total = subtotal + total_tax_amount + shipping_charges
     c.drawString(label_x, pricing_y, "Grand Total:")
     c.drawRightString(value_x, pricing_y, f"Rs. {grand_total:.2f}")
     

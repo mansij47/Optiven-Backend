@@ -21,11 +21,32 @@ class CustomerModel(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-class SellOrderPayload(BaseModel):
+class CreateCustomerModel(BaseModel):
+    customer_name: str
+    customer_email: Optional[str] = None
+    customer_phone: str  # Required for customer identity
+    delivery_address: Optional[str] = None
+    gst_number: Optional[str] = None
+
+class UpdateCustomerModel(BaseModel):
+    customer_name: Optional[str] = None
+    customer_email: Optional[str] = None
+    customer_phone: Optional[str] = None
+    delivery_address: Optional[str] = None
+    gst_number: Optional[str] = None
+
+class SellOrderProductItem(BaseModel):
+    product_id: str
+    product_name: str
     quantity: int
-    price: float
+    unit_price: float
     tax: float
+
+class SellOrderPayload(BaseModel):
+    products: List[SellOrderProductItem]
     payment_status: str = "Paid"  # ✅ Default to 'Paid', can be 'Pay Later'
+    shipping_charges: float = 0.0
+    order_status: Optional[str] = "completed"
 
 class Product(BaseModel):
     org_id: str
@@ -73,6 +94,7 @@ class EditOrderModel(BaseModel):
     delivery_address: Optional[str]
     delivery_date: Optional[datetime]
     gst_number: Optional[str]
+    currency: Optional[str] = None  # ✅ Add currency field for updates
     products: Optional[List[EditOrderProductInput]]
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -86,9 +108,11 @@ class SalesOrderModel(BaseModel):
     customer_phone: str           # ✅ New field
     customer_email: EmailStr      # ✅ New field (validates email)
     order_date: datetime
+    quotation_status: Optional[str] = "pending"  
     delivery_address: str
     delivery_date: datetime
     gst_number: str
+    currency: Optional[str] = "INR"  # ✅ Currency field with default value
     products: List[OrderProductInput]
     total_order_price: Optional[float] = None
     order_status: Optional[str] = "0"
@@ -177,6 +201,7 @@ class ReturnedOrderModel(BaseModel):
     returned_amount: Optional[float] = None
     sent_to_procurement: Optional[int] = None
     store_id: str
+    destination: Optional[str] = None  # ✅ Track where the return went (Inventory, LossOrders, ReturnToVendor)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 class ProductDetails(BaseModel):

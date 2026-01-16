@@ -972,7 +972,11 @@ async def handle_customer_return(
             )
         
         # ✅ 2. Determine item destination based on return reason
-        if return_reason == "Damage on arrival":
+        # Make reason comparison case-insensitive and flexible
+        reason_lower = return_reason.lower() if return_reason else ""
+        is_damaged = "damage" in reason_lower
+        
+        if is_damaged:
             if is_seller_returnable:
                 # Damaged & returnable to vendor → Mark for vendor return
                 new_status = "return_to_vendor"
