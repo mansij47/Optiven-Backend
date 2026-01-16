@@ -46,7 +46,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
                 if inv_seller_conditions and len(inv_seller_conditions) > 0:
                     is_seller_returnable = True
                     seller_return_conditions = inv_seller_conditions
-                    print(f"[DEBUG] Updated is_seller_returnable from inventory: True")
+                    # print(f"[DEBUG] Updated is_seller_returnable from inventory: True")
                     print(f"[DEBUG] Seller conditions from inventory: {inv_seller_conditions}")
     
     # ✅ Auto-correct: If seller_return_conditions exist but is_seller_returnable is False, set it to True
