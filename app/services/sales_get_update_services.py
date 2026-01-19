@@ -92,6 +92,7 @@ async def get_all_sales_orders(store_id: str):
             # ✅ Use snapshot values stored at order time
             product_data = {
                 "product_id": product.get("product_id"),
+                "product_name": product.get("product_name"),
                 "order_quantity": int(product.get("order_quantity", 0)),
                 "unit_price": float(product.get("unit_price", 0)),
                 "tax": float(product.get("tax", 0)),
