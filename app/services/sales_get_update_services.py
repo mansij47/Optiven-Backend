@@ -400,7 +400,7 @@ async def mark_order_status_as_sold(order_id: str, store_id: str):
     )
     return result.modified_count
 
-async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None, price: float = None, tax: float = None, payment_status: str = "Paid", background_tasks: BackgroundTasks = None):
+async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None, price: float = None, tax: float = None, payment_status: str = "Paid", background_tasks: BackgroundTasks = None, created_by: dict = None):
     order = await fetch_order_and_validate(order_id, store_id)
     
     # ✅ If quantity is provided from popup, update the order's quantity before processing
@@ -441,6 +441,18 @@ async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None,
     # Update the order with item information
     # ✅ IMPORTANT: order_status is ALWAYS "1" for sold orders, regardless of payment status
     # payment_status tracks whether payment was received ("Paid") or deferred ("Pay Later")
+    update_fields = {
+        "order_status": "1",  # Always "1" for sold orders
+        "payment_status": payment_status,  # Track payment separately
+        "products": updated_products,
+        "quotation_status": "completed",
+        "sold_at": datetime.now(timezone.utc),  # ✅ FIXED
+        "updated_at": datetime.now(timezone.utc)
+    }
+
+    if created_by:
+        update_fields["created_by"] = created_by
+
     await db.SalesOrders.update_one(
         {
             "order_id": order_id,
@@ -448,14 +460,7 @@ async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None,
             "order_status": "0"
         },
         {
-            "$set": {
-                "order_status": "1",  # Always "1" for sold orders
-                "payment_status": payment_status,  # Track payment separately
-                "products": updated_products,
-                "quotation_status": "completed",
-                "sold_at": datetime.now(timezone.utc),  # ✅ FIXED
-                "updated_at": datetime.now(timezone.utc)
-            }
+            "$set": update_fields
         }
     )
     

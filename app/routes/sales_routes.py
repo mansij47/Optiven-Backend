@@ -125,7 +125,8 @@ async def mark_order_as_sold(order_id: str, payload: SellOrderPayload, request: 
         price=None,
         tax=None,
         payment_status=payload.payment_status,
-        background_tasks=background_tasks
+        background_tasks=background_tasks,
+        created_by=payload.created_by
     )
 
     if updated_count == 0:

@@ -47,6 +47,7 @@ class SellOrderPayload(BaseModel):
     payment_status: str = "Paid"  # ✅ Default to 'Paid', can be 'Pay Later'
     shipping_charges: float = 0.0
     order_status: Optional[str] = "completed"
+    created_by: Optional[dict] = None
 
 class Product(BaseModel):
     org_id: str
