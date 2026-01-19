@@ -111,7 +111,7 @@ async def get_vendor(vendor_id: str, request: Request):
     return vendor
 
 # UPDATE (BY UUID)
-@router.patch("/vendors/{vendor_id}")
+@router.put("/vendors/{vendor_id}")
 async def update_vendor(vendor_id: str, vendor: VendorUpdate, request: Request):
     user = request.state.user
     if not user or user.get("role") not in ["admin", "procurement"]:

@@ -66,6 +66,7 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
                 "returnable": contract_data.returnable,
                 "return_conditions": contract_data.return_conditions,
                 "is_damage_returnable": contract_data.is_damage_returnable,
+                "secondary_email": contract_data.secondary_email,
             }}
         )
         
@@ -96,8 +97,9 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
                 vendor_payload = VendorModel(
                     vendor_name=contract_data.vendor_name,
                     email=contract_data.vendor_email,
+                    secondary_email=contract_data.secondary_email,
                     phone_number=contract_data.phone,
-                    vendor_store_name=None,
+                    vendor_store_name=contract_data.vendor_store_name,
                     vendor_store_address=contract_data.address,
                     pincode=contract_data.pincode,
                     gst_number=contract_data.gst_number,

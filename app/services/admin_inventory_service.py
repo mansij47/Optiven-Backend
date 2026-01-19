@@ -379,7 +379,7 @@ async def get_all_products(store_id: str):
             min_stock = product.get("min_stock", 4)
 
             # ✅ Compute status in memory
-            if quantity == 0:
+            if quantity <= 1:
                 status = "Stock-out"
             elif quantity <= min_stock:
                 status = "Low Stock"
@@ -445,11 +445,19 @@ async def get_product_by_id(product_id: str, store_id: str):
         
         # Update product quantity to match available items count (not total items)
         product_data["quantity"] = available_items  # ✅ Show only available items
-        product_data["status"] = "Stock-in" if available_items > 1 else "Stock-out"
         product_data["average_price"] = average_price
         product_data["vendor_tax"] = average_vendor_tax  # Add vendor tax to product
         product_data["total_items"] = len(items)  # Total including sold
         product_data["available_items"] = available_items
+
+        # ✅ Consistent status logic
+        min_stock = product_data.get("min_stock", 4)
+        if available_items <= 1:
+            product_data["status"] = "Stock-out"
+        elif available_items <= min_stock:
+            product_data["status"] = "Low Stock"
+        else:
+            product_data["status"] = "Stock-in"
         
         # ✅ Check for low stock and send notification if needed
         await check_and_notify_low_stock(product_id, store_id)

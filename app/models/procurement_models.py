@@ -13,6 +13,7 @@ class LoginModel(BaseModel):
 class VendorModel(BaseModel):
     vendor_name: str
     email: EmailStr
+    secondary_email: Optional[EmailStr] = None
     phone_number: str
     vendor_store_name:Optional[str]= None
     vendor_store_address: str
@@ -26,6 +27,7 @@ class VendorModel(BaseModel):
 class VendorUpdate(BaseModel):
     vendor_name: Optional[str] = None
     email: Optional[EmailStr] = None
+    secondary_email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
     vendor_store_name: Optional[str] = None
     vendor_store_address: Optional[str] = None
@@ -64,6 +66,7 @@ class Contract(BaseModel):
     vendor_name: str
     vendor_store_name: Optional[str] = None
     vendor_email: Optional[str] = None
+    secondary_email: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
     pincode: Optional[str] = None
@@ -95,6 +98,7 @@ class ContractUpdate(BaseModel):
     vendor_name: Optional[str]= None
     vendor_store_name: Optional[str]= None
     vendor_email: Optional[EmailStr]= None
+    secondary_email: Optional[EmailStr]= None
     phone: Optional[str]= None
     address: Optional[str]= None
     pincode: Optional[str]= None
@@ -178,6 +182,7 @@ class ReturnToVendorDetail(BaseModel):
 class PurchaseOrderResponse(BaseModel):
     order_id: str
     contract_id: str
+    vendor_id: Optional[str] = None
     vendor_name:str  = None
     delivery_date: str
     received_status: str
@@ -197,6 +202,7 @@ class PurchaseOrderResponse(BaseModel):
 class PurchaseOrderDetailResponse(BaseModel):
     order_id: str
     contract_id: str
+    vendor_id: Optional[str] = None
     vendor_name: Optional[str] = None
     delivery_date: str
     validation_status: str

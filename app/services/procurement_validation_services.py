@@ -367,7 +367,7 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             # ✅ Auto-correct: If seller_return_conditions exist but is_seller_returnable is False, set it to True
             if item_seller_return_conditions and len(item_seller_return_conditions) > 0 and not item_is_seller_returnable:
                 item_is_seller_returnable = True
-                print(f"[DEBUG] Auto-corrected is_seller_returnable to True for item based on conditions: {item_seller_return_conditions}")
+                # print(f"[DEBUG] Auto-corrected is_seller_returnable to True for item based on conditions: {item_seller_return_conditions}")
             
             # Get unit_price for the item
             unit_price_value = item_detail.get("unit_price") if isinstance(item_detail, dict) else item_detail.unit_price
@@ -817,7 +817,15 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
     # --- Update PurchaseOrder validation_status to "completed" ---
     await db["PurchaseOrders"].update_one(
         {"order_id": data.order_id},
-        {"$set": {"validation_status": "Completed", "last_updated": str(datetime.now())}}
+        {
+            "$set": {
+                "validation_status": "Completed", 
+                "last_updated": str(datetime.now()),
+                "is_product_damaged": data.is_product_damaged,
+                "received_status": "Received",
+                "received_quantity": data.received_quantity
+            }
+        }
     )
 
     return final_doc

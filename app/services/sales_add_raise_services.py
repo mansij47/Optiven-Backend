@@ -60,9 +60,16 @@ async def add_sales_order(order_data: dict, store_id: str):
     order_data["customer_id"] = customer_id
     
     # Set type and status based on inventory availability
-    if stock_out_or_preorder:
+    # logic refined: "Preorder" if product not in inventory, "Stock-out" if in inventory but no stock
+    has_preorder = any(p.get("product_status") == "Preorder" for p in final_products)
+    has_stockout = any(p.get("product_status") == "Stock-out" for p in final_products)
+
+    if has_preorder:
         order_data["type"] = "preorder"
-        order_data["status"] = "Preorder"  # Changed from "Stock-out" to "Preorder"
+        order_data["status"] = "Preorder"
+    elif has_stockout:
+        order_data["type"] = "preorder"
+        order_data["status"] = "Stock-out"
     else:
         order_data["type"] = "order"
         order_data["status"] = "Stock-in"
