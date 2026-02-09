@@ -63,9 +63,12 @@ async def sync_inventory_on_change(product_id: str, store_id: str, background_ta
     current_status = product.get("status", "Stock-out")
     
     # Determine new status based on quantity
+    # quantity == 0 → Stock-out
+    # quantity > 0 AND quantity < min_stock → Low Stock
+    # quantity >= min_stock → Stock-in
     if available_quantity == 0:
         new_status = "Stock-out"
-    elif available_quantity <= min_stock:
+    elif available_quantity < min_stock:
         new_status = "Low Stock"
     else:
         new_status = "Stock-in"

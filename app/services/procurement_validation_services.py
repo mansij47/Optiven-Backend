@@ -14,25 +14,26 @@ async def update_sales_orders_on_inventory_change(product_name: str, product_id:
     Update sales orders when inventory is added/updated:
     - Populate product_id (was empty for preorders)
     - Change type from 'preorder' to 'order'
-    - Change status from 'Preorder' to 'Stock-in'
+    - Change status from 'Preorder'/'Stock-out' to 'Stock-in'
     - Update unit_price (selling price) and tax (consumer tax) with actual values from inventory
     - Recalculate total_order_price
-    Match by product_name (case-insensitive) since preorders have empty product_id
+    Match by product_name (case-insensitive) OR product_id
     """
     # Use the selling_price and consumer_tax from inventory (average_selling_price and tax fields)
     inventory_selling_price = float(selling_price)
     inventory_consumer_tax = float(consumer_tax)
     
-    # Find all preorder sales orders with this product (case-insensitive match)
-    # Also check for orders with unit_price = 0 and tax = 0 (preorder indicators)
+    # Find all preorder/stock-out sales orders with this product
+    # Match by product_name (for Preorders) OR product_id (for Stock-out orders)
     preorder_orders = db.SalesOrders.find({
         "store_id": store_id,
         "type": "preorder",
         "products": {
             "$elemMatch": {
-                "product_name": {"$regex": f"^{product_name}$", "$options": "i"},
-                "unit_price": 0,
-                "tax": 0
+                "$or": [
+                    {"product_name": {"$regex": f"^{product_name}$", "$options": "i"}},
+                    {"product_id": product_id}
+                ]
             }
         }
     })
@@ -43,7 +44,13 @@ async def update_sales_orders_on_inventory_change(product_name: str, product_id:
         new_total_price = 0.0
         
         for product in order.get("products", []):
-            if product.get("product_name", "").lower() == product_name.lower():
+            # Match by product_name OR product_id
+            product_matches = (
+                product.get("product_name", "").lower() == product_name.lower() or
+                product.get("product_id") == product_id
+            )
+            
+            if product_matches:
                 # ✅ Update all fields for the matching product
                 product["product_id"] = product_id  # Populate the product_id from inventory
                 product["product_status"] = "Stock-in"
@@ -79,8 +86,9 @@ async def update_sales_orders_on_inventory_change(product_name: str, product_id:
                 }
             }
         )
+        print(f"[INFO] ✅ Updated order {order.get('order_id')} from '{order.get('status')}' to 'Stock-in' for product: {product_name}")
     
-    print(f"[INFO] Updated preorder sales orders for product: {product_name}, assigned product_id: {product_id}, selling_price: {inventory_selling_price}, consumer_tax: {inventory_consumer_tax}")
+    print(f"[INFO] Updated preorder/stock-out sales orders for product: {product_name}, product_id: {product_id}, selling_price: {inventory_selling_price}, consumer_tax: {inventory_consumer_tax}")
 
 
 async def validate_purchase_order_preview(

@@ -4,9 +4,9 @@ from fastapi import HTTPException,Request
 from fastapi.responses import FileResponse
 from bson import ObjectId
 from datetime import datetime
+from datetime import timedelta
 from app.db import db
-from typing import Dict
-
+from typing import Dict, List, Optional
 from app.models.procurement_models import Contract
 from app.utils.auth import verify_password, create_access_token
 from app.utils.contract_pdf_utils import generate_contract_pdf_from_schema
@@ -23,10 +23,49 @@ purchase_orders_collection = db["PurchaseOrders"]
 VENDOR_COLLECTION = db["Vendors"]
 stores_collection = db["Stores"]
 
+
+async def generate_contract_id(store_id: str) -> str:
+    """
+    Generate contract ID in format: CONT-{YEAR}-{6-digit-sequence}
+    Example: CONT-2026-000001
+    """
+    current_year = datetime.now().year
+    prefix = f"CONT-{current_year}-"
+    
+    # Find the last contract ID for this year and store
+    last_contract = await contracts_collection.find_one(
+        {
+            "contract_id": {"$regex": f"^{prefix}"},
+            "store_id": store_id
+        },
+        sort=[("contract_id", -1)]
+    )
+    
+    if last_contract and last_contract.get("contract_id"):
+        # Extract sequence number from last contract ID
+        last_id = last_contract["contract_id"]
+        try:
+            last_sequence = int(last_id.split("-")[-1])
+            next_sequence = last_sequence + 1
+        except (ValueError, IndexError):
+            next_sequence = 1
+    else:
+        next_sequence = 1
+    
+    contract_id = f"{prefix}{next_sequence:06d}"
+    return contract_id
+
+
 #Add Contract
 async def add_contract(contract_data: Contract, store_id: str, request: Request):
     if not contract_data.contract_id:
-        contract_data.contract_id = str(uuid.uuid4())
+        contract_data.contract_id = await generate_contract_id(store_id)
+    
+    # ✅ Auto-generate request_id if not provided (direct contract creation without requested order)
+    if not contract_data.request_id or contract_data.request_id.strip() == "":
+        from app.utils.sales_utils import generate_request_id
+        contract_data.request_id = await generate_request_id()
+        print(f"✅ Auto-generated request_id: {contract_data.request_id} for direct contract creation")
 
     existing = await contracts_collection.find_one(
         {"contract_id": contract_data.contract_id, "store_id": store_id},
@@ -112,6 +151,16 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
         contract_dict["store_id"] = store_id
         if vendor_id:
             contract_dict["vendor_id"] = vendor_id
+        
+        # ✅ Add valid_upto date (15 days from created_at) in Indian format
+        if "created_at" in contract_dict:
+            created_date = contract_dict["created_at"]
+            if isinstance(created_date, str):
+                created_date = datetime.fromisoformat(created_date.replace("Z", "+00:00"))
+            
+            valid_date = created_date + timedelta(days=15)
+            # Format as DD-MM-YYYY (Indian format)
+            contract_dict["valid_upto"] = valid_date.strftime("%d-%m-%Y")
 
         await contracts_collection.insert_one(contract_dict)
 
@@ -197,6 +246,7 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
                 "warranty_tenure": contract.get("warranty_tenure"),
                 "warranty_unit": contract.get("warranty_unit"),
                 "type": contract.get("type", "order"),
+                "valid_upto": contract.get("valid_upto"),
 
             }
             await purchase_orders_collection.insert_one(purchase_order)

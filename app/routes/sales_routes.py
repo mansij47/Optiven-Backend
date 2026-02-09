@@ -290,7 +290,8 @@ async def raise_request_order(request_model: RequestOrderModel, request: Request
         estimate_date=request_model.estimate_date,
         org_id=org_id,
         store_id=store_id,
-        requester=requester
+        requester=requester,
+        quantity_override=request_model.quantity  # ✅ Pass the user-provided quantity
     )
 
     # ✅ Check if the order is a preorder to send priority notification

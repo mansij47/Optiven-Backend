@@ -127,6 +127,7 @@ class LoginModel(BaseModel):
 class RequestOrderModel(BaseModel):
     order_id: str             # To fetch product info
     estimate_date: str
+    quantity: Optional[int] = None  # ✅ Optional: Override the requested quantity
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

@@ -149,14 +149,16 @@ async def process_products(products: list, store_id: str):
                 is_consumer_returnable=inventory_data["is_consumer_returnable"]
             )
 
-            # Check inventory status and quantity
-            inventory_status = inventory_data["inventory_item"].get("status", "")
+            # ✅ Get inventory status and map to order status
+            # Stock-out → Stock-out (not available)
+            # Low Stock OR Stock-in → Stock-in (available for sale)
+            inventory_status = inventory_data["inventory_item"].get("status", "Stock-in")
             
-            # If inventory is Stock-out OR insufficient quantity -> mark as Preorder
-            if inventory_status in ["Stock-out", "stock-out", "stockout"] or inventory_data["inventory_quantity"] < order_quantity:
-                product_detail["product_status"] = "Stock-out"  # Changed from "Stock-out" to "Preorder"
+            if inventory_status == "Stock-out":
+                product_detail["product_status"] = "Stock-out"
                 stock_out_or_preorder = True
             else:
+                # Low Stock or Stock-in → both show as Stock-in (available)
                 product_detail["product_status"] = "Stock-in"
 
             subtotal += total_with_tax
@@ -286,13 +288,16 @@ async def prepare_request_data(order_id: str, store_id: str, estimate_date: str,
 #         return request_id
 
 
-async def raise_request_order_service(order_id: str, estimate_date: str, org_id: str, store_id: str, requester: dict):
+async def raise_request_order_service(order_id: str, estimate_date: str, org_id: str, store_id: str, requester: dict, quantity_override: int = None):
     request_data = await prepare_request_data(order_id, store_id, estimate_date, org_id, requester)
 
-
+    # ✅ Use user-provided quantity if given, otherwise use calculated quantity
+    if quantity_override is not None and quantity_override > 0:
+        qty = int(quantity_override)
+    else:
+        qty = int(request_data.get("quantity", 0))
 
     # ---- Minimal hardening ----
-    qty = int(request_data.get("quantity", 0))
     if qty < 0:
         raise ValueError("quantity cannot be negative")
     
@@ -301,14 +306,15 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
 
     
 
-    # Build a deterministic matcher (add category if present in your data)
+    # ✅ Build matcher based on product_name ONLY (not category)
+    # This ensures that same product name = same request (quantity updated)
+    # Different product name = new request
     matcher = {
         "store_id": store_id,
         "org_id": org_id,
         "product_name": request_data["product_name"],
     }
-    if request_data.get("category"):
-        matcher["category"] = request_data["category"]
+    # Note: Category is NOT part of the matcher - only product_name determines uniqueness
     
 
     # Prepare $setOnInsert with all fields from request_data except 'quantity' and fields in $set
@@ -340,6 +346,12 @@ async def raise_request_order_service(order_id: str, estimate_date: str, org_id:
         },
         upsert=True,
         return_document=ReturnDocument.AFTER,
+    )
+    
+    # ✅ Mark the sales order as having a pending request
+    await db.SalesOrders.update_one(
+        {"order_id": order_id, "store_id": store_id},
+        {"$set": {"has_pending_request": True}}
     )
 
     return doc["request_id"]

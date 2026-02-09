@@ -81,18 +81,34 @@ async def generate_customer_id():
 
 
 async def generate_request_id():
-    last_request = await db.RequestedOrders.find_one(
+    # ✅ Check BOTH RequestedOrders and Contracts collections for the highest request_id
+    last_from_requests = await db.RequestedOrders.find_one(
         {"request_id": {"$regex": "^REQ\\d{3}$"}},{"_id": 0},
         sort=[("request_id", -1)]
     )
-    if last_request and last_request.get("request_id", "").startswith("REQ"):
+    
+    last_from_contracts = await db.Contracts.find_one(
+        {"request_id": {"$regex": "^REQ\\d{3}$"}},{"_id": 0},
+        sort=[("request_id", -1)]
+    )
+    
+    # Extract numbers from both collections
+    max_number = 0
+    
+    if last_from_requests and last_from_requests.get("request_id", "").startswith("REQ"):
         try:
-            last_number = int(last_request["request_id"][3:])
-            new_number = last_number + 1
+            max_number = max(max_number, int(last_from_requests["request_id"][3:]))
         except ValueError:
-            new_number = 1
-    else:
-        new_number = 1
+            pass
+    
+    if last_from_contracts and last_from_contracts.get("request_id", "").startswith("REQ"):
+        try:
+            max_number = max(max_number, int(last_from_contracts["request_id"][3:]))
+        except ValueError:
+            pass
+    
+    # Increment from the highest number found across both collections
+    new_number = max_number + 1 if max_number > 0 else 1
 
     return f"REQ{new_number:03d}"
 
@@ -171,8 +187,8 @@ async def fetch_inventory_details(product_id: str, store_id: str):
         except (ValueError, TypeError):
             unit_price = 0.0
     
-    if unit_price == 0:
-        raise HTTPException(status_code=500, detail=f"Invalid unit price for product ID {product_id}.")
+    # ✅ Don't raise error if unit_price is 0 - product exists but might be stock-out
+    # The calling function will handle status determination based on inventory quantity
 
     try:
         product_tax = float(inventory_item.get("tax", 0))

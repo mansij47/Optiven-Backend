@@ -345,18 +345,18 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
             print(f"✅ [SELL] Marked item {item_id} as sold - Modified count: {result.modified_count}")
             
             # Verify the update actually worked
-            verify_item = await db.ProductItems.find_one({"item_id": item_id, "store_id": store_id})
+            # verify_item = await db.ProductItems.find_one({"item_id": item_id, "store_id": store_id})
             # print(f"🔍 [SELL] Verified item {item_id} status after update: {verify_item.get('status')}, store: {verify_item.get('store_id')}")
 
         # Store the sold items for this product
-        sold_items_map[product_id] = sold_item_ids
-        print(f"✅ [SELL] Sold {len(sold_item_ids)} items for product {product_id}")
+        # sold_items_map[product_id] = sold_item_ids
+        # print(f"✅ [SELL] Sold {len(sold_item_ids)} items for product {product_id}")
 
         # ✅ DEBUG: Check ALL items for this product to see actual statuses
-        all_items_debug = await db.ProductItems.find({
-            "product_id": product_id,
-            "store_id": store_id
-        }, {"item_id": 1, "status": 1, "_id": 0}).to_list(None)
+        # all_items_debug = await db.ProductItems.find({
+        #     "product_id": product_id,
+        #     "store_id": store_id
+        # }, {"item_id": 1, "status": 1, "_id": 0}).to_list(None)
         # print(f"🔍 [SELL] ALL items for {product_id} in {store_id}: {all_items_debug}")
 
         # ✅ Update product quantity (count remaining available items)

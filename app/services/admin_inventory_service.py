@@ -151,16 +151,16 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
 
         
         # Check if quantity has reached or dropped below min_stock threshold
-        # BUT: Stock-out (qty <= 1) takes priority over Low Stock
-        if quantity <= 1:
-            # Stock-out takes priority - don't set Low Stock for qty <= 1
+        # 0 = Stock-out, >0 and <min_stock = Low Stock, >=min_stock = Stock-in
+        if quantity == 0:
+            # Stock-out - no items available
             if current_status != "Stock-out":
                 await db.Inventory.update_one(
                     {"product_id": product_id, "store_id": store_id},
                     {"$set": {"status": "Stock-out", "updated_at": datetime.utcnow()}}
                 )
                 print(f"✅ Status updated to 'Stock-out' for {product_id}")
-        elif quantity <= min_stock:
+        elif quantity < min_stock:
             from app.services.notification_service import create_notification
             from app.models.notification_model import NotificationBase, UserInfo
             
@@ -272,7 +272,14 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
         product_dict["org_id"] = org_id
         product_dict["created_at"] = datetime.utcnow()
         product_dict["updated_at"] = datetime.utcnow()
-        product_dict["status"] = "Stock-in" if quantity > 1 else "Stock-out"
+        # 0 = Stock-out, >0 and <min_stock = Low Stock, >=min_stock = Stock-in
+        min_stock_val = product_dict.get("min_stock", 4)
+        if quantity == 0:
+            product_dict["status"] = "Stock-out"
+        elif quantity < min_stock_val:
+            product_dict["status"] = "Low Stock"
+        else:
+            product_dict["status"] = "Stock-in"
         product_dict["type"] = "order"  # ✅ Default to 'order' for manually added inventory
         product_dict["average_price"] = 0.0  # Will be updated after items are created
         product_dict["average_selling_price"] = 0.0  # Will be calculated from items' selling_price
@@ -379,9 +386,10 @@ async def get_all_products(store_id: str):
             min_stock = product.get("min_stock", 4)
 
             # ✅ Compute status in memory
-            if quantity <= 1:
+            # 0 = Stock-out, >0 and <min_stock = Low Stock, >=min_stock = Stock-in
+            if quantity == 0:
                 status = "Stock-out"
-            elif quantity <= min_stock:
+            elif quantity < min_stock:
                 status = "Low Stock"
             else:
                 status = "Stock-in"
@@ -451,10 +459,11 @@ async def get_product_by_id(product_id: str, store_id: str):
         product_data["available_items"] = available_items
 
         # ✅ Consistent status logic
+        # 0 = Stock-out, >0 and <min_stock = Low Stock, >=min_stock = Stock-in
         min_stock = product_data.get("min_stock", 4)
-        if available_items <= 1:
+        if available_items == 0:
             product_data["status"] = "Stock-out"
-        elif available_items <= min_stock:
+        elif available_items < min_stock:
             product_data["status"] = "Low Stock"
         else:
             product_data["status"] = "Stock-in"
@@ -583,7 +592,14 @@ async def export_inventory_csv(store_id: str, org_id: str):
             })
             
             quantity = int(doc.get("quantity", 0)) if doc.get("quantity") else 0
-            status = "Stock-in" if available_items > 1 else "Stock-out"
+            min_stock_val = doc.get("min_stock", 4)
+            # Calculate status: 0=Stock-out, >0 and <min_stock=Low Stock, >=min_stock=Stock-in
+            if available_items == 0:
+                status = "Stock-out"
+            elif available_items < min_stock_val:
+                status = "Low Stock"
+            else:
+                status = "Stock-in"
 
             writer.writerow([
                 doc.get("org_id", ""),
@@ -836,6 +852,21 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None, s
             "status": "available"
         })
         
+        # Get min_stock for proper status calculation
+        product_info = await db.Inventory.find_one(
+            {"product_id": product_id, "store_id": store_id},
+            {"min_stock": 1}
+        )
+        min_stock_val = product_info.get("min_stock", 4) if product_info else 4
+        
+        # Calculate status: 0=Stock-out, >0 and <min_stock=Low Stock, >=min_stock=Stock-in
+        if remaining_available == 0:
+            new_status = "Stock-out"
+        elif remaining_available < min_stock_val:
+            new_status = "Low Stock"
+        else:
+            new_status = "Stock-in"
+        
         # Update product quantity in Inventory
         await db.Inventory.update_one(
             {"product_id": product_id, "store_id": store_id},
@@ -843,7 +874,7 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None, s
                 "$set": {
                     "quantity": remaining_available,
                     "updated_at": datetime.utcnow(),
-                    "status": "Stock-in" if remaining_available > 1 else "Stock-out"
+                    "status": new_status
                 }
             }
         )
@@ -919,13 +950,28 @@ async def mark_items_as_sold_bulk(product_id: str, quantity: int, store_id: str,
             "status": "available"
         })
         
+        # Get min_stock for proper status calculation
+        product_info = await db.Inventory.find_one(
+            {"product_id": product_id, "store_id": store_id},
+            {"min_stock": 1}
+        )
+        min_stock_val = product_info.get("min_stock", 4) if product_info else 4
+        
+        # Calculate status: 0=Stock-out, >0 and <min_stock=Low Stock, >=min_stock=Stock-in
+        if remaining_available == 0:
+            new_status = "Stock-out"
+        elif remaining_available < min_stock_val:
+            new_status = "Low Stock"
+        else:
+            new_status = "Stock-in"
+        
         await db.Inventory.update_one(
             {"product_id": product_id, "store_id": store_id},
             {
                 "$set": {
                     "quantity": remaining_available,
                     "updated_at": datetime.utcnow(),
-                    "status": "Stock-in" if remaining_available > 1 else "Stock-out"
+                    "status": new_status
                 }
             }
         )
@@ -1044,13 +1090,28 @@ async def handle_customer_return(
             "status": "available"
         })
         
+        # Get min_stock for proper status calculation
+        product_info = await db.Inventory.find_one(
+            {"product_id": product_id, "store_id": store_id},
+            {"min_stock": 1}
+        )
+        min_stock_val = product_info.get("min_stock", 4) if product_info else 4
+        
+        # Calculate status: 0=Stock-out, >0 and <min_stock=Low Stock, >=min_stock=Stock-in
+        if available_count == 0:
+            new_status = "Stock-out"
+        elif available_count < min_stock_val:
+            new_status = "Low Stock"
+        else:
+            new_status = "Stock-in"
+        
         await db.Inventory.update_one(
             {"product_id": product_id, "store_id": store_id},
             {
                 "$set": {
                     "quantity": available_count,
                     "updated_at": datetime.utcnow(),
-                    "status": "Stock-in" if available_count > 1 else "Stock-out"
+                    "status": new_status
                 }
             }
         )
