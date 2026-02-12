@@ -557,6 +557,30 @@ async def get_customer_details(customer_id: str, request: Request):
     return customer
 
 
+@router.get("/validate-phone/{phone_number}")
+async def validate_customer_phone(phone_number: str, request: Request):
+    """Validate phone number and return existing customer details if found"""
+    user = request.state.user
+
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    from app.services.sales_add_raise_services import find_customer_by_phone
+    existing_customer = await find_customer_by_phone(phone_number, store_id=store_id)
+    
+    if existing_customer:
+        return {
+            "exists": True,
+            "customer": existing_customer
+        }
+    
+    return {"exists": False}
+
+
 @router.get("/customers/search")
 async def search_customers(query: str = Query(..., min_length=1), request: Request = None):
     """Search customers by name, email, or phone"""

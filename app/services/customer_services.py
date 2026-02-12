@@ -166,21 +166,15 @@ async def get_customer_by_id(customer_id: str, store_id: Optional[str] = None) -
     Get detailed customer information including order history.
     Finds customer by customer_id and aggregates all orders from that phone number.
     """
-    # First, find the customer's phone number from the given customer_id
-    customer_order = await sales_orders_collection.find_one(
-        {"customer_id": customer_id},
-        {"customer_phone": 1, "_id": 0}
-    )
-    
-    if not customer_order or not customer_order.get("customer_phone"):
-        raise HTTPException(status_code=404, detail="Customer not found")
-    
-    customer_phone = customer_order["customer_phone"]
-    
-    # Build match filter to get ALL orders with this phone number
-    match_filter = {"customer_phone": customer_phone}
+    # Build match filter to get ONLY orders for this specific customer_id
+    match_filter = {"customer_id": customer_id}
     if store_id:
         match_filter["store_id"] = store_id
+    
+    # First check if customer exists
+    customer_check = await sales_orders_collection.find_one(match_filter)
+    if not customer_check:
+        raise HTTPException(status_code=404, detail="Customer not found")
     
     # Get customer aggregated data by phone number
     pipeline = [
@@ -188,7 +182,7 @@ async def get_customer_by_id(customer_id: str, store_id: Optional[str] = None) -
         {"$sort": {"created_at": -1}},  # Sort by date to get latest order first
         {
             "$group": {
-                "_id": "$customer_phone",  # ✅ Group by phone to aggregate all orders
+                "_id": "$customer_id",  # ✅ Group by customer_id to get only THIS customer's orders
                 "customer_id": {"$first": "$customer_id"},
                 "customer_name": {"$first": "$customer_name"},
                 "customer_email": {"$first": "$customer_email"},
@@ -268,7 +262,7 @@ async def get_customer_by_id(customer_id: str, store_id: Optional[str] = None) -
     customer.pop("_id", None)  # Remove _id from grouping, keep original customer_id
     # Keep latest_order_id for Mark as Paid functionality
     
-    # Get order history - fetch ALL orders with this phone number
+    # Get order history - fetch ONLY orders for this specific customer_id
     orders_cursor = sales_orders_collection.find(match_filter).sort("created_at", -1)
     orders = await orders_cursor.to_list(length=None)
     
@@ -312,8 +306,8 @@ async def search_customers(query: str, store_id: Optional[str] = None) -> List[C
         {"$sort": {"created_at": -1}},  # Sort by date to get latest order first
         {
             "$group": {
-                # ✅ Group by phone number to aggregate all orders from same customer
-                "_id": "$customer_phone",
+                # ✅ Group by customer_id to show only individual customers, not all orders from same phone
+                "_id": "$customer_id",
                 "customer_id": {"$first": "$customer_id"},
                 "customer_name": {"$first": "$customer_name"},
                 "customer_email": {"$first": "$customer_email"},

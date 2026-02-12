@@ -6,29 +6,53 @@ from app.models.sales_model import ReturnOrderRequest, SendToProcurement
 from app.utils.sales_utils import enrich_products, fetch_inventory_details, generate_customer_id, generate_order_id, build_product_detail, generate_request_id, generate_return_id
 
 
+async def find_customer_by_phone(customer_phone: str, store_id: str = None):
+    """
+    Find customer details by phone number.
+    Returns: Full customer details if found, None otherwise
+    """
+    if not customer_phone:
+        return None
+    
+    phone = customer_phone.strip()
+    existing = await db.SalesOrders.find_one(
+        {"customer_phone": phone, "store_id": store_id},
+        {
+            "customer_id": 1,
+            "customer_name": 1,
+            "customer_email": 1,
+            "customer_phone": 1,
+            "delivery_address": 1,
+            "gst_number": 1,
+            "_id": 0
+        }
+    )
+    return existing
+
+
 async def find_existing_customer(customer_name: str, customer_phone: str = None, customer_email: str = None, store_id: str = None):
     """
     Check if a customer already exists based on email or phone.
-    Priority: Email > Phone
+    Priority: Phone > Email (phone is more reliable for uniqueness)
     Returns: customer_id if found, None otherwise
     """
     # Normalize inputs
     email = customer_email.strip().lower() if customer_email else None
     phone = customer_phone.strip() if customer_phone else None
     
-    # Try email first (most reliable for unique identification)
-    if email:
+    # Try phone first (most reliable for unique identification)
+    if phone:
         existing = await db.SalesOrders.find_one(
-            {"customer_email": email, "store_id": store_id},
+            {"customer_phone": phone, "store_id": store_id},
             {"customer_id": 1, "_id": 0}
         )
         if existing:
             return existing.get("customer_id")
     
-    # Try phone as fallback
-    if phone:
+    # Try email as fallback
+    if email:
         existing = await db.SalesOrders.find_one(
-            {"customer_phone": phone, "store_id": store_id},
+            {"customer_email": email, "store_id": store_id},
             {"customer_id": 1, "_id": 0}
         )
         if existing:

@@ -55,6 +55,61 @@ class ProductItem(BaseModel):
     vendor_name: Optional[str] = None 
     serial_no: Optional[str] = None
     batch_number: Optional[str] = None
+    status: Optional[str] = "available"  # available, sold, returned, damaged
+    
+    # Warranty information
+    has_warranty: Optional[bool] = False
+    warranty_tenure: Optional[int] = 0
+    warranty_unit: Optional[str] = ""
+    
+    # Return conditions
+    is_consumer_returnable: Optional[bool] = False
+    consumer_return_conditions: Optional[List[str]] = Field(default_factory=list)
+    is_seller_returnable: Optional[bool] = False
+    seller_return_conditions: Optional[List[str]] = Field(default_factory=list)
+    
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+# Combined model for directly adding product to inventory
+# Individual item data for direct product addition
+class ProductItemData(BaseModel):
+    serial_no: Optional[str] = None
+    batch_number: Optional[str] = None
+    unit_price: str = "0"
+    
+    # Warranty information
+    has_warranty: Optional[bool] = False
+    warranty_tenure: Optional[int] = 0
+    warranty_unit: Optional[str] = ""
+    
+    # Return conditions
+    is_consumer_returnable: Optional[bool] = False
+    consumer_return_conditions: Optional[List[str]] = Field(default_factory=list)
+    is_seller_returnable: Optional[bool] = False
+    seller_return_conditions: Optional[List[str]] = Field(default_factory=list)
+
+
+class AddProductDirectRequest(BaseModel):
+    # Product fields
+    product_name: str
+    unit: str = "pcs"
+    category: str
+    sub_category: Optional[str] = ""
+    min_stock: int = 5
+    tags: Optional[List[str]] = Field(default_factory=list)
+    tax: Optional[float] = 0.0
+    
+    # Vendor fields (shared across all items)
+    vendor_id: Optional[str] = None
+    vendor_name: Optional[str] = None
+    
+    # Selling price (can be provided or auto-calculated)
+    selling_price: Optional[str] = None
+    
+    # Items array - each item has its own serial, batch, warranty, and return conditions
+    items: List[ProductItemData] = Field(default_factory=list)
+    
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
