@@ -125,8 +125,8 @@ async def send_low_stock_notification(product_id: str, product_name: str, availa
                 store_id=store_id
             ),
             type_of_notification="Inventory Alert",
-            title="⚠️ Low Stock Alert",
-            message=f"Product '{product_name}' is running low. Available: {available_quantity}, Minimum: {min_stock}",
+            title=" Low Stock Alert",
+            message=f"{product_name}' stock is low. available: {available_quantity} (minimum: {min_stock})",
             emails=[]
         )
         

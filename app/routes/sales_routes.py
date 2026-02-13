@@ -307,12 +307,12 @@ async def raise_request_order(request_model: RequestOrderModel, request: Request
         from app.services.notification_service import create_notification
         
         if is_preorder:
-            notification_title = " PRIORITY: Preorder Request from Sales"
-            notification_message = f"Sales has raised a PREORDER request (Request ID: {request_id})."
+            notification_title = " Priority: Preorder Request Raised"
+            notification_message = f"Preorder request created by Sales ( {request_id})."
             notification_type = "Preorder Request"
         else:
-            notification_title = "New Procurement Request from Sales"
-            notification_message = f"Sales has raised a new procurement request (Request ID: {request_id})."
+            notification_title = "New Request from Sales"
+            notification_message = f"Sales has raised a new request ( {request_id})."
             notification_type = "Order Request"
         
        

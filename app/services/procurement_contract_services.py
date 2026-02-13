@@ -202,7 +202,7 @@ async def update_contract(contract_id: str, store_id: str, updated_data: dict):
 
 
 #STATUS (Accept, Decline & Revoke)
-async def update_contract_status(contract_id: str, store_id: str, action: str):
+async def update_contract_status(contract_id: str, store_id: str, action: str, vendor_email: str = None, secondary_email: str = None):
     contract = await contracts_collection.find_one({
         "contract_id": contract_id,
         "store_id": store_id
@@ -221,6 +221,8 @@ async def update_contract_status(contract_id: str, store_id: str, action: str):
                 "contract_id": contract_id,
                 "vendor_id": contract.get("vendor_id"),
                 "vendor_name": contract["vendor_name"],
+                "vendor_email": vendor_email or contract.get("vendor_email"),
+                "secondary_email": secondary_email or contract.get("secondary_email"),
                 "delivery_date": contract["date_of_delivery"],
                 "validation_status": "Pending",
                 "product_name": contract.get("product_name"),

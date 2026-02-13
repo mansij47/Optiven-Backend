@@ -129,6 +129,8 @@ class ContractUpdate(BaseModel):
 class ContractStatusUpdate(BaseModel):
     action: Literal["accept", "decline", "revoke"]
     contract_id: str
+    vendor_email: Optional[str] = None
+    secondary_email: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -184,6 +186,8 @@ class PurchaseOrderResponse(BaseModel):
     contract_id: str
     vendor_id: Optional[str] = None
     vendor_name:str  = None
+    vendor_email: Optional[str] = None
+    secondary_email: Optional[str] = None
     delivery_date: str
     received_status: str
     validation_status: str
@@ -204,6 +208,8 @@ class PurchaseOrderDetailResponse(BaseModel):
     contract_id: str
     vendor_id: Optional[str] = None
     vendor_name: Optional[str] = None
+    vendor_email: Optional[str] = None
+    secondary_email: Optional[str] = None
     delivery_date: str
     validation_status: str
     received_status: str
@@ -422,3 +428,12 @@ class PurchaseOrderSubmitRequest(BaseModel):
     type: Optional[str] = "order"  # "order" or "preorder" - defaults to "order" when validated    
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# Purchase Order Email
+class SendPurchaseOrderEmail(BaseModel):
+    order_id: str
+    recipient_emails: List[EmailStr]  # Can send to vendor_email and/or secondary_email
+    subject: Optional[str] = "Purchase Order"
+    message: Optional[str] = None  # Optional custom message
+    created_at: datetime = Field(default_factory=datetime.utcnow)

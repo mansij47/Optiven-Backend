@@ -174,7 +174,7 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
                 
                 # Send notification to admin and procurement
                 product_name = product.get("product_name", "Unknown Product")
-                category = product.get("category", "")
+                # category = product.get("category", "")
                 
                 notification_data = NotificationBase(
                     sender=UserInfo(
@@ -183,8 +183,8 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
                         store_id=store_id
                     ),
                     type_of_notification="Inventory Alert",
-                    title="⚠️ Low Stock Alert",
-                    message=f"Product '{product_name}' (Category: {category}) is running low! ",
+                    title=" Low Stock Alert",
+                    message=f"Product '{product_name}'  is running low! ",
                     emails=[]  # Will send to all admin and procurement users in the store
                 )
                 

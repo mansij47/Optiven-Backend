@@ -262,8 +262,8 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                         "is_seller_returnable": is_seller_returnable,
                         "seller_return_conditions": seller_return_conditions,
                         # ✅ Update consumer returnability fields
-                        "is_consumer_returnable": data.is_consumer_returnable if hasattr(data, 'is_consumer_returnable') else existing_product.get("is_consumer_returnable", False),
-                        "consumer_return_conditions": data.consumer_return_conditions if hasattr(data, 'consumer_return_conditions') else existing_product.get("consumer_return_conditions", []),
+                        "is_consumer_returnable": data.is_consumer_returnable,
+                        "consumer_return_conditions": data.consumer_return_conditions if data.consumer_return_conditions else [],
                         "updated_at": datetime.utcnow()
                     }
                 }
@@ -303,8 +303,8 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 "is_seller_returnable": is_seller_returnable,
                 "seller_return_conditions": seller_return_conditions,
                 # ✅ Add consumer returnability fields
-                "is_consumer_returnable": data.is_consumer_returnable if hasattr(data, 'is_consumer_returnable') else False,
-                "consumer_return_conditions": data.consumer_return_conditions if hasattr(data, 'consumer_return_conditions') else [],
+                "is_consumer_returnable": data.is_consumer_returnable,
+                "consumer_return_conditions": data.consumer_return_conditions if data.consumer_return_conditions else [],
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow()
             }

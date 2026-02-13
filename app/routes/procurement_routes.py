@@ -6,7 +6,7 @@ from jose import JWTError
 from pydantic import ValidationError
 from bson  import ObjectId
 
-from app.models.procurement_models import Contract,ContractUpdate, ContractStatusUpdate, RequestedOrder, RequestedOrderUpdate
+from app.models.procurement_models import Contract,ContractUpdate, ContractStatusUpdate, RequestedOrder, RequestedOrderUpdate, SendPurchaseOrderEmail
 
 from app.services import procurement_requestedOrder_service
 from app.services import procurement_contract_services
@@ -220,7 +220,8 @@ async def update_contract_status_route(
 
     # ✅ Update contract status first
     result = await procurement_contract_services.update_contract_status(
-        status_update.contract_id, store_id, status_update.action
+        status_update.contract_id, store_id, status_update.action, 
+        status_update.vendor_email, status_update.secondary_email
     )
 
     # ✅ Then create notification for Sales & Procurement
@@ -367,6 +368,26 @@ async def download_contract_pdf(contract_id: str, request: Request):
 @router.put("/purchase-orders/{order_id}/mark-received")
 async def mark_as_received(order_id: str):
     return await procurement_purchase_services.mark_purchase_order_as_received(order_id)
+
+
+# Send Purchase Order Email
+@router.post("/purchase-orders/{order_id}/send-email")
+async def send_purchase_order_email(
+    order_id: str,
+    email_data: SendPurchaseOrderEmail,
+    request: Request
+):
+    """
+    Send purchase order via email to vendor(s)
+    """
+    user = request.state.user
+    if user.get("role") != "procurement":
+        raise HTTPException(status_code=403, detail="Only procurement users are allowed.")
+
+    store_id = user.get("store_id")
+    return await procurement_purchase_services.send_purchase_order_email_service(
+        order_id, store_id, email_data.recipient_emails, email_data.subject, email_data.message
+    )
 
 
 

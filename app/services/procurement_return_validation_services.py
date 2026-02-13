@@ -159,7 +159,7 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
                 }
                 await loss_orders_collection.insert_one(loss_data)
             
-            message = f"Customer return processed: {return_qty} unit(s) of {product_name} added to Loss Sheet (Loss ID: {loss_id})"
+            message = f"Customer return processed: {return_qty} unit of {product_name} added to Loss Sheet ( ID: {loss_id})"
             
         elif destination == "ReturnToVendor":
             # Get items marked for vendor return
@@ -236,10 +236,10 @@ async def validate_return_order(data: ReturnValidationRequest, store_id: str, or
                 }
                 await return_to_vendor_collection.insert_one(return_data)
             
-            message = f"Customer return processed: {return_qty} unit(s) of {product_name} marked for Return to Vendor"
+            message = f"Customer return processed: {return_qty} unit of {product_name} marked for Return to Vendor"
         else:
             # Inventory destination
-            message = f"Customer return processed: {return_qty} unit(s) of {product_name} returned to Inventory (Available for resale)"
+            message = f"Customer return processed:{return_qty} unit of {product_name} restocked and available for resale"
         
         # Update return order status to completed with destination tracking
         await return_orders_collection.update_one(
