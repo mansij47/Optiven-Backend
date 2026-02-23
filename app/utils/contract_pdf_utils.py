@@ -99,30 +99,28 @@ def generate_contract_pdf(contract_data: Dict[str, Any], output_dir: str = None)
         c.drawString(left, y_left, f"Address: {wrapped_address[0] if wrapped_address else '-'}")
         y_left -= 12
         for line in wrapped_address[1:]:
-            c.setFont("Helvetica", 9)
-            c.drawString(left + 20, y_left, line)
+            c.drawString(left + 45, y_left, line)  # Indent to align with address text, not label
             y_left -= 12
-        c.setFont("Helvetica", 10)
     else:
         c.drawString(left, y_left, f"Address: -")
+        y_left -= 12
     
-    y_left -= 3
     c.drawString(left, y_left, f"Pincode: {contract_data.get('pincode', '-')}")
     
     # Contract Status (Right Column)
-    mid_page = width / 2
-    y_right = top - 130
+    right_col = right - 140  # Position closer to right margin
+    y_right = top - 130 
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(mid_page, y_right, "Contract Details:")
+    c.drawString(right_col, y_right, "Contract Details:")
     
     y_right -= 18
     c.setFont("Helvetica", 10)
     status = contract_data.get('status', 'pending')
-    c.drawString(mid_page, y_right, f"Status: {status.upper()}")
+    c.drawString(right_col, y_right, f"Status: {status.upper()}")
     
     y_right -= 15
     request_id = contract_data.get('request_id', '-')
-    c.drawString(mid_page, y_right, f"Request ID: {request_id}")
+    c.drawString(right_col, y_right, f"Request ID: {request_id}")
     
     y_right -= 15
     created_at = contract_data.get('created_at', '-')
@@ -130,7 +128,7 @@ def generate_contract_pdf(contract_data: Dict[str, Any], output_dir: str = None)
         created_at = created_at.strftime("%Y-%m-%d")
     elif isinstance(created_at, str) and 'T' in created_at:
         created_at = created_at.split('T')[0]
-    c.drawString(mid_page, y_right, f"Created: {created_at}")
+    c.drawString(right_col, y_right, f"Created: {created_at}")
     
     # Calculate the lowest Y position from both columns
     y = min(y_left, y_right)
@@ -145,10 +143,10 @@ def generate_contract_pdf(contract_data: Dict[str, Any], output_dir: str = None)
     
     # Define column positions
     col_product = left
-    col_qty = left + 120
-    col_unit = left + 200
-    col_base = left + 270
-    col_unitprice = left + 350
+    col_qty = left + 100
+    col_unit = left + 180
+    col_base = left + 250
+    col_unitprice = left + 330
     col_total = right - 40
     
     # Draw headers
@@ -167,8 +165,8 @@ def generate_contract_pdf(contract_data: Dict[str, Any], output_dir: str = None)
     c.setFont("Helvetica", 9)
     
     product_name = contract_data.get("product_name", "-")
-    if len(product_name) > 23:
-        product_name = product_name[:20] + "..."
+    # Wrap long product names instead of truncating (max 20 chars per line)
+    wrapped_product_name = textwrap.wrap(product_name, width=20)
     
     quantity = float(contract_data.get("quantity", 0))
     unit = contract_data.get("unit", "pcs")
@@ -184,13 +182,19 @@ def generate_contract_pdf(contract_data: Dict[str, Any], output_dir: str = None)
     tax_amount = (subtotal * vendor_tax) / 100
     total = subtotal + tax_amount
     
-    # Draw product row
-    c.drawString(col_product, row_y, product_name)
+    # Draw product row - first line with all columns
+    c.drawString(col_product, row_y, wrapped_product_name[0] if wrapped_product_name else "-")
     c.drawString(col_qty, row_y, f"{quantity:.0f}")
     c.drawString(col_unit, row_y, unit)
     c.drawString(col_base, row_y, f"Rs. {base_price:.2f}")
     c.drawString(col_unitprice, row_y, f"Rs. {unit_price_with_tax:.2f}")
     c.drawRightString(col_total + 40, row_y, f"Rs. {total:.2f}")
+    
+    # Draw additional lines for wrapped product name (if any)
+    if len(wrapped_product_name) > 1:
+        for line in wrapped_product_name[1:]:
+            row_y -= 12
+            c.drawString(col_product, row_y, line)
     
     row_y -= 5
     

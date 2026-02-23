@@ -86,5 +86,6 @@ async def get_return_order_detail(return_id: str, store_id: str) -> ReturnOrderD
         remarks=order.get("remarks"),
         reason=order.get("reason"),
         returned_amount=order.get("returned_amount"),
-        store_id=order.get("store_id")
+        store_id=order.get("store_id"),
+        destination=order.get("destination")  # ✅ Include destination if available
     )

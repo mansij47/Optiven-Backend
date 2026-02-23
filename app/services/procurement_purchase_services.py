@@ -154,3 +154,112 @@ async def generate_purchase_order_pdf_service(order_id: str, store_id: str):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating PDF: {str(e)}")
+
+
+async def send_purchase_order_email_service(order_id: str, store_id: str, recipient_emails: list, subject: str = None, custom_message: str = None):
+    """
+    Service to send purchase order via email to vendor(s) with PDF attachment
+    """
+    from app.utils.email_utils import send_purchase_order_email
+    
+    # Get purchase order data
+    order = await purchase_orders_collection.find_one(
+        {"order_id": order_id, "store_id": store_id}, {"_id": 0}
+    )
+    
+    if not order:
+        raise HTTPException(status_code=404, detail="Purchase Order not found")
+    
+    # Validate that at least one email is provided
+    if not recipient_emails or len(recipient_emails) == 0:
+        raise HTTPException(status_code=400, detail="At least one recipient email is required")
+
+    # Handle received_status (supports both int and string)
+    raw_received = order.get("received_status", 0)
+    if isinstance(raw_received, int):
+        order["received_status"] = RECEIVED_MAP.get(raw_received, "Waiting")
+    elif isinstance(raw_received, str):
+        order["received_status"] = raw_received
+    else:
+        order["received_status"] = "Waiting"
+
+    # Handle validation_status (supports both int and string)
+    raw_validation = order.get("validation_status", 0)
+    if isinstance(raw_validation, int):
+        order["validation_status"] = VALIDATION_MAP.get(raw_validation, "Pending")
+    elif isinstance(raw_validation, str):
+        order["validation_status"] = raw_validation
+    else:
+        order["validation_status"] = "Pending"
+
+    # Generate PDF for email attachment
+    pdf_path = None
+    try:
+        # Create response model for PDF generation
+        order_response = PurchaseOrderDetailResponse(**order)
+        pdf_path = generate_purchase_order_pdf_from_schema(order_response, output_dir=None)
+        
+        if not os.path.exists(pdf_path):
+            print(f"⚠️ Failed to generate PDF for email attachment")
+            pdf_path = None
+            
+    except Exception as pdf_error:
+        print(f"⚠️ Error generating PDF for email attachment: {pdf_error}")
+        pdf_path = None
+    
+    # Format delivery date if exists
+    if order.get("delivery_date"):
+        try:
+            from datetime import datetime
+            if isinstance(order["delivery_date"], str):
+                # Try to parse and format the date
+                dt = datetime.fromisoformat(order["delivery_date"].replace("Z", "+00:00"))
+                order["delivery_date"] = dt.strftime("%d/%m/%Y")
+        except:
+            # Keep original format if parsing fails
+            pass
+    
+    # Set default subject if not provided
+    if not subject:
+        subject = "Purchase Order"
+    
+    try:
+        # Send emails with PDF attachment
+        email_result = send_purchase_order_email(
+            order_data=order,
+            recipient_emails=recipient_emails,
+            subject=subject,
+            custom_message=custom_message,
+            pdf_path=pdf_path
+        )
+        
+        # Clean up temporary PDF file
+        if pdf_path and os.path.exists(pdf_path):
+            try:
+                os.remove(pdf_path)
+                print(f"🗑️ Cleaned up temporary PDF file: {pdf_path}")
+            except Exception as cleanup_error:
+                print(f"⚠️ Failed to clean up PDF file: {cleanup_error}")
+        
+        if email_result["success"]:
+            attachment_note = " with PDF attachment" if pdf_path else " (PDF generation failed)"
+            return {
+                "message": f"Purchase order sent successfully to {email_result['successful_emails']} out of {email_result['total_emails']} recipients{attachment_note}",
+                "order_id": order_id,
+                "email_results": email_result,
+                "pdf_attached": pdf_path is not None
+            }
+        else:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to send emails. All {email_result['total_emails']} attempts failed."
+            )
+            
+    except Exception as e:
+        # Clean up PDF file in case of error
+        if pdf_path and os.path.exists(pdf_path):
+            try:
+                os.remove(pdf_path)
+            except:
+                pass
+        raise HTTPException(status_code=500, detail=f"Error sending purchase order email: {str(e)}")

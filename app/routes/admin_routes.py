@@ -11,12 +11,12 @@ from jose import jwt, JWTError
 from bson import ObjectId
 import os
 from app.models.notification_model import UserInfo, NotificationBase
-from app.models.admin_model import DepartmentUserCreate, DepartmentUserUpdate, EditOrderModel, LoginModel, NewRaiseOrderRequest, Product, RaiseRequestOrderModel, ResetPasswordRequest, SalesOrderModel, ProfitOrder
+from app.models.admin_model import AddProductDirectRequest, DepartmentUserCreate, DepartmentUserUpdate, EditOrderModel, LoginModel, NewRaiseOrderRequest, Product, RaiseRequestOrderModel, ResetPasswordRequest, SalesOrderModel, ProfitOrder
 from app.services import notification_service
 from app.utils.old_product import get_old_products, delete_old_products
 from app.services import admin_lossOrders_service
 from app.services import admin_profitOrders_service
-from app.services.admin_inventory_service import delete_product_service, update_product_by_id, export_inventory_csv, get_product_by_id, get_all_products, add_product_service, get_item_by_id, update_item_by_id 
+from app.services.admin_inventory_service import add_product_direct_service, delete_product_service, update_product_by_id, export_inventory_csv, get_product_by_id, get_all_products, add_product_service, get_item_by_id, update_item_by_id 
 from app.services.admin_lossOrders_service import  get_loss_data_by_user, export_loss_orders_csv
 from app.services.admin_receivedOrders_service import delete_order_by_id, get_all_sales_orders, update_sales_order
 from app.services.admin_requested_order_service import get_all_requested_orders, raise_order_request_service, raise_request_order_service
@@ -222,6 +222,29 @@ async def add_product(request: Request, product: Product):
 
     # Call service with product data and store ID
     return await add_product_service(product, store_id, org_id)
+
+
+@router.post("/add/product/direct")
+async def add_product_directly(request: Request, product_data: AddProductDirectRequest):
+    """
+    Directly add a product to inventory without vendor verification.
+    Product becomes immediately available for sale.
+    Creates both Product and ProductItem records in one operation.
+    """
+    user = request.state.user
+    if user.get("role") not in ["admin", "procurement"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Admin or Procurement access required.")
+
+    store_id = user.get("store_id")
+    org_id = user.get("org_id")
+    if not store_id or not org_id:
+        raise HTTPException(status_code=400, detail="Store ID or Org ID missing in token.")
+
+    return await add_product_direct_service(
+        product_data.model_dump(),
+        store_id,
+        org_id
+    )
 
    
 @router.get("/all/product")

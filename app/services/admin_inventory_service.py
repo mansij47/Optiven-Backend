@@ -151,16 +151,16 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
 
         
         # Check if quantity has reached or dropped below min_stock threshold
-        # BUT: Stock-out (qty <= 1) takes priority over Low Stock
-        if quantity <= 1:
-            # Stock-out takes priority - don't set Low Stock for qty <= 1
+        # 0 = Stock-out, >0 and <min_stock = Low Stock, >=min_stock = Stock-in
+        if quantity == 0:
+            # Stock-out - no items available
             if current_status != "Stock-out":
                 await db.Inventory.update_one(
                     {"product_id": product_id, "store_id": store_id},
                     {"$set": {"status": "Stock-out", "updated_at": datetime.utcnow()}}
                 )
                 print(f"✅ Status updated to 'Stock-out' for {product_id}")
-        elif quantity <= min_stock:
+        elif quantity < min_stock:
             from app.services.notification_service import create_notification
             from app.models.notification_model import NotificationBase, UserInfo
             
@@ -174,7 +174,7 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
                 
                 # Send notification to admin and procurement
                 product_name = product.get("product_name", "Unknown Product")
-                category = product.get("category", "")
+                # category = product.get("category", "")
                 
                 notification_data = NotificationBase(
                     sender=UserInfo(
@@ -183,8 +183,8 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
                         store_id=store_id
                     ),
                     type_of_notification="Inventory Alert",
-                    title="⚠️ Low Stock Alert",
-                    message=f"Product '{product_name}' (Category: {category}) is running low! ",
+                    title=" Low Stock Alert",
+                    message=f"Product '{product_name}'  is running low! ",
                     emails=[]  # Will send to all admin and procurement users in the store
                 )
                 
@@ -272,7 +272,14 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
         product_dict["org_id"] = org_id
         product_dict["created_at"] = datetime.utcnow()
         product_dict["updated_at"] = datetime.utcnow()
-        product_dict["status"] = "Stock-in" if quantity > 1 else "Stock-out"
+        # 0 = Stock-out, >0 and <min_stock = Low Stock, >=min_stock = Stock-in
+        min_stock_val = product_dict.get("min_stock", 4)
+        if quantity == 0:
+            product_dict["status"] = "Stock-out"
+        elif quantity < min_stock_val:
+            product_dict["status"] = "Low Stock"
+        else:
+            product_dict["status"] = "Stock-in"
         product_dict["type"] = "order"  # ✅ Default to 'order' for manually added inventory
         product_dict["average_price"] = 0.0  # Will be updated after items are created
         product_dict["average_selling_price"] = 0.0  # Will be calculated from items' selling_price
@@ -379,9 +386,10 @@ async def get_all_products(store_id: str):
             min_stock = product.get("min_stock", 4)
 
             # ✅ Compute status in memory
+            # 0 = Stock-out, >0 and <min_stock = Low Stock, >=min_stock = Stock-in
             if quantity == 0:
                 status = "Stock-out"
-            elif quantity <= min_stock:
+            elif quantity < min_stock:
                 status = "Low Stock"
             else:
                 status = "Stock-in"
@@ -445,11 +453,20 @@ async def get_product_by_id(product_id: str, store_id: str):
         
         # Update product quantity to match available items count (not total items)
         product_data["quantity"] = available_items  # ✅ Show only available items
-        product_data["status"] = "Stock-in" if available_items > 1 else "Stock-out"
         product_data["average_price"] = average_price
         product_data["vendor_tax"] = average_vendor_tax  # Add vendor tax to product
         product_data["total_items"] = len(items)  # Total including sold
         product_data["available_items"] = available_items
+
+        # ✅ Consistent status logic
+        # 0 = Stock-out, >0 and <min_stock = Low Stock, >=min_stock = Stock-in
+        min_stock = product_data.get("min_stock", 4)
+        if available_items == 0:
+            product_data["status"] = "Stock-out"
+        elif available_items < min_stock:
+            product_data["status"] = "Low Stock"
+        else:
+            product_data["status"] = "Stock-in"
         
         # ✅ Check for low stock and send notification if needed
         await check_and_notify_low_stock(product_id, store_id)
@@ -575,7 +592,14 @@ async def export_inventory_csv(store_id: str, org_id: str):
             })
             
             quantity = int(doc.get("quantity", 0)) if doc.get("quantity") else 0
-            status = "Stock-in" if available_items > 1 else "Stock-out"
+            min_stock_val = doc.get("min_stock", 4)
+            # Calculate status: 0=Stock-out, >0 and <min_stock=Low Stock, >=min_stock=Stock-in
+            if available_items == 0:
+                status = "Stock-out"
+            elif available_items < min_stock_val:
+                status = "Low Stock"
+            else:
+                status = "Stock-in"
 
             writer.writerow([
                 doc.get("org_id", ""),
@@ -828,6 +852,21 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None, s
             "status": "available"
         })
         
+        # Get min_stock for proper status calculation
+        product_info = await db.Inventory.find_one(
+            {"product_id": product_id, "store_id": store_id},
+            {"min_stock": 1}
+        )
+        min_stock_val = product_info.get("min_stock", 4) if product_info else 4
+        
+        # Calculate status: 0=Stock-out, >0 and <min_stock=Low Stock, >=min_stock=Stock-in
+        if remaining_available == 0:
+            new_status = "Stock-out"
+        elif remaining_available < min_stock_val:
+            new_status = "Low Stock"
+        else:
+            new_status = "Stock-in"
+        
         # Update product quantity in Inventory
         await db.Inventory.update_one(
             {"product_id": product_id, "store_id": store_id},
@@ -835,7 +874,7 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None, s
                 "$set": {
                     "quantity": remaining_available,
                     "updated_at": datetime.utcnow(),
-                    "status": "Stock-in" if remaining_available > 1 else "Stock-out"
+                    "status": new_status
                 }
             }
         )
@@ -911,13 +950,28 @@ async def mark_items_as_sold_bulk(product_id: str, quantity: int, store_id: str,
             "status": "available"
         })
         
+        # Get min_stock for proper status calculation
+        product_info = await db.Inventory.find_one(
+            {"product_id": product_id, "store_id": store_id},
+            {"min_stock": 1}
+        )
+        min_stock_val = product_info.get("min_stock", 4) if product_info else 4
+        
+        # Calculate status: 0=Stock-out, >0 and <min_stock=Low Stock, >=min_stock=Stock-in
+        if remaining_available == 0:
+            new_status = "Stock-out"
+        elif remaining_available < min_stock_val:
+            new_status = "Low Stock"
+        else:
+            new_status = "Stock-in"
+        
         await db.Inventory.update_one(
             {"product_id": product_id, "store_id": store_id},
             {
                 "$set": {
                     "quantity": remaining_available,
                     "updated_at": datetime.utcnow(),
-                    "status": "Stock-in" if remaining_available > 1 else "Stock-out"
+                    "status": new_status
                 }
             }
         )
@@ -972,7 +1026,11 @@ async def handle_customer_return(
             )
         
         # ✅ 2. Determine item destination based on return reason
-        if return_reason == "Damage on arrival":
+        # Make reason comparison case-insensitive and flexible
+        reason_lower = return_reason.lower() if return_reason else ""
+        is_damaged = "damage" in reason_lower
+        
+        if is_damaged:
             if is_seller_returnable:
                 # Damaged & returnable to vendor → Mark for vendor return
                 new_status = "return_to_vendor"
@@ -1032,13 +1090,28 @@ async def handle_customer_return(
             "status": "available"
         })
         
+        # Get min_stock for proper status calculation
+        product_info = await db.Inventory.find_one(
+            {"product_id": product_id, "store_id": store_id},
+            {"min_stock": 1}
+        )
+        min_stock_val = product_info.get("min_stock", 4) if product_info else 4
+        
+        # Calculate status: 0=Stock-out, >0 and <min_stock=Low Stock, >=min_stock=Stock-in
+        if available_count == 0:
+            new_status = "Stock-out"
+        elif available_count < min_stock_val:
+            new_status = "Low Stock"
+        else:
+            new_status = "Stock-in"
+        
         await db.Inventory.update_one(
             {"product_id": product_id, "store_id": store_id},
             {
                 "$set": {
                     "quantity": available_count,
                     "updated_at": datetime.utcnow(),
-                    "status": "Stock-in" if available_count > 1 else "Stock-out"
+                    "status": new_status
                 }
             }
         )
@@ -1151,3 +1224,253 @@ async def export_product_items_csv(product_id: str, store_id: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error exporting product items: {str(e)}")
+
+
+# ✅ Add Product Directly to Inventory (Combines Product + ProductItem)
+async def add_product_direct_service(product_data: dict, store_id: str, org_id: str):
+    """
+    Directly adds a product to inventory with initial items.
+    Skips vendor verification - product is immediately available for sale.
+    Creates both Product record and ProductItem records in one operation.
+    Now supports items array with individual validation data (warranty, return conditions, etc.)
+    """
+    try:
+        # Extract product-level data
+        product_name = product_data.get("product_name")
+        unit = product_data.get("unit", "pcs")
+        category = product_data.get("category")
+        sub_category = product_data.get("sub_category", "")
+        min_stock = product_data.get("min_stock", 5)
+        tags = product_data.get("tags", [])
+        vendor_tax = product_data.get("vendor_tax", 0.0)
+        
+        # Vendor fields (shared across all items)
+        vendor_id = product_data.get("vendor_id")
+        vendor_name = product_data.get("vendor_name")
+        
+        # Selling price (can be auto-calculated)
+        selling_price = product_data.get("selling_price")
+        
+        # Items array - each item has its own serial, batch, warranty, return conditions
+        items = product_data.get("items", [])
+        quantity = len(items)
+        
+        if quantity == 0:
+            return {
+                "success": False,
+                "message": "No items provided. Please add at least one item."
+            }
+        
+        # Check if product already exists
+        existing_product = await db.Inventory.find_one({
+            "store_id": store_id,
+            "product_name": product_name
+        })
+        
+        if existing_product:
+            # Update existing product
+            product_id = existing_product["product_id"]
+            new_quantity = existing_product.get("quantity", 0) + quantity
+            
+            # Create new items from array
+            items_created = []
+            for item_data in items:
+                item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
+                
+                # Get item-specific data
+                unit_price = item_data.get("unit_price", "0")
+                
+                # Calculate selling_price if not provided (unit_price + 50)
+                item_selling_price = selling_price
+                if not item_selling_price or item_selling_price == "" or item_selling_price is None:
+                    try:
+                        unit_price_float = float(unit_price)
+                        item_selling_price = str(round(unit_price_float + 50, 2))
+                    except (ValueError, TypeError):
+                        item_selling_price = "50.0"
+                else:
+                    item_selling_price = str(item_selling_price)
+                
+                item_dict = {
+                    "org_id": org_id,
+                    "store_id": store_id,
+                    "item_id": item_id,
+                    "product_id": product_id,
+                    "item_name": product_name,
+                    "unit_price": unit_price,
+                    "selling_price": item_selling_price,
+                    "vendor_id": vendor_id,
+                    "vendor_name": vendor_name,
+                    "vendor_tax": vendor_tax,
+                    "serial_no": item_data.get("serial_no"),
+                    "batch_number": item_data.get("batch_number"),
+                    "status": "available",
+                    
+                    # Warranty information
+                    "has_warranty": item_data.get("has_warranty", False),
+                    "warranty_tenure": item_data.get("warranty_tenure", 0),
+                    "warranty_unit": item_data.get("warranty_unit", ""),
+                    
+                    # Return conditions
+                    "is_consumer_returnable": item_data.get("is_consumer_returnable", False),
+                    "consumer_return_conditions": item_data.get("consumer_return_conditions", []),
+                    
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }
+                
+                await db.ProductItems.insert_one(item_dict)
+                items_created.append(item_id)
+            
+            # Recalculate averages
+            average_price = await calculate_average_price(product_id, store_id)
+            average_selling_price = await calculate_average_selling_price(product_id, store_id)
+            average_vendor_tax = await calculate_average_vendor_tax(product_id, store_id)
+            
+            # Determine status
+            if new_quantity == 0:
+                status = "Stock-out"
+            elif new_quantity < min_stock:
+                status = "Low Stock"
+            else:
+                status = "Stock-in"
+            
+            # Update product
+            await db.Inventory.update_one(
+                {"product_id": product_id, "store_id": store_id},
+                {
+                    "$set": {
+                        "quantity": new_quantity,
+                        "average_price": average_price,
+                        "average_selling_price": average_selling_price,
+                        "vendor_tax": average_vendor_tax,
+                        "status": status,
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+            )
+            
+            await check_and_notify_low_stock(product_id, store_id)
+            
+            return {
+                "success": True,
+                "message": f"Product '{product_name}' updated successfully",
+                "product_id": product_id,
+                "quantity": new_quantity,
+                "items_created": items_created
+            }
+        
+        else:
+            # Create new product
+            product_id = await _next_id(db.Inventory, "product_id", "PROD", store_id)
+            
+            # Determine status
+            if quantity == 0:
+                status = "Stock-out"
+            elif quantity < min_stock:
+                status = "Low Stock"
+            else:
+                status = "Stock-in"
+            
+            # Create product record
+            product_record = {
+                "org_id": org_id,
+                "store_id": store_id,
+                "product_id": product_id,
+                "product_name": product_name,
+                "unit": unit,
+                "quantity": quantity,
+                "category": category,
+                "sub_category": sub_category,
+                "min_stock": min_stock,
+                "tags": tags,
+                "vendor_tax": vendor_tax,
+                "status": status,
+                "type": "order",  # Directly available, not preorder
+                "average_price": 0.0,
+                "average_selling_price": 0.0,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }
+            
+            await db.Inventory.insert_one(product_record)
+            
+            # Create items from array
+            items_created = []
+            for item_data in items:
+                item_id = await _next_id(db.ProductItems, "item_id", "ITEM", store_id)
+                
+                # Get item-specific data
+                unit_price = item_data.get("unit_price", "0")
+                
+                # Calculate selling_price if not provided (unit_price + 50)
+                item_selling_price = selling_price
+                if not item_selling_price or item_selling_price == "" or item_selling_price is None:
+                    try:
+                        unit_price_float = float(unit_price)
+                        item_selling_price = str(round(unit_price_float + 50, 2))
+                    except (ValueError, TypeError):
+                        item_selling_price = "50.0"
+                else:
+                    item_selling_price = str(item_selling_price)
+                
+                item_dict = {
+                    "org_id": org_id,
+                    "store_id": store_id,
+                    "item_id": item_id,
+                    "product_id": product_id,
+                    "item_name": product_name,
+                    "unit_price": unit_price,
+                    "selling_price": item_selling_price,
+                    "vendor_id": vendor_id,
+                    "vendor_name": vendor_name,
+                    "vendor_tax": vendor_tax,
+                    "serial_no": item_data.get("serial_no"),
+                    "batch_number": item_data.get("batch_number"),
+                    "status": "available",
+                    
+                    # Warranty information
+                    "has_warranty": item_data.get("has_warranty", False),
+                    "warranty_tenure": item_data.get("warranty_tenure", 0),
+                    "warranty_unit": item_data.get("warranty_unit", ""),
+                    
+                    # Return conditions
+                    "is_consumer_returnable": item_data.get("is_consumer_returnable", False),
+                    "consumer_return_conditions": item_data.get("consumer_return_conditions", []),
+                    
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }
+                
+                await db.ProductItems.insert_one(item_dict)
+                items_created.append(item_id)
+            
+            # Recalculate averages
+            average_price = await calculate_average_price(product_id, store_id)
+            average_selling_price = await calculate_average_selling_price(product_id, store_id)
+            average_vendor_tax = await calculate_average_vendor_tax(product_id, store_id)
+            
+            await db.Inventory.update_one(
+                {"product_id": product_id, "store_id": store_id},
+                {
+                    "$set": {
+                        "average_price": average_price,
+                        "average_selling_price": average_selling_price,
+                        "vendor_tax": average_vendor_tax
+                    }
+                }
+            )
+            
+            await check_and_notify_low_stock(product_id, store_id)
+            
+            return {
+                "success": True,
+                "message": f"Product '{product_name}' added successfully",
+                "product_id": product_id,
+                "quantity": quantity,
+                "items_created": items_created
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error adding product directly: {str(e)}")
+

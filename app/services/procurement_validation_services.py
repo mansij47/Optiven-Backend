@@ -14,25 +14,26 @@ async def update_sales_orders_on_inventory_change(product_name: str, product_id:
     Update sales orders when inventory is added/updated:
     - Populate product_id (was empty for preorders)
     - Change type from 'preorder' to 'order'
-    - Change status from 'Preorder' to 'Stock-in'
+    - Change status from 'Preorder'/'Stock-out' to 'Stock-in'
     - Update unit_price (selling price) and tax (consumer tax) with actual values from inventory
     - Recalculate total_order_price
-    Match by product_name (case-insensitive) since preorders have empty product_id
+    Match by product_name (case-insensitive) OR product_id
     """
     # Use the selling_price and consumer_tax from inventory (average_selling_price and tax fields)
     inventory_selling_price = float(selling_price)
     inventory_consumer_tax = float(consumer_tax)
     
-    # Find all preorder sales orders with this product (case-insensitive match)
-    # Also check for orders with unit_price = 0 and tax = 0 (preorder indicators)
+    # Find all preorder/stock-out sales orders with this product
+    # Match by product_name (for Preorders) OR product_id (for Stock-out orders)
     preorder_orders = db.SalesOrders.find({
         "store_id": store_id,
         "type": "preorder",
         "products": {
             "$elemMatch": {
-                "product_name": {"$regex": f"^{product_name}$", "$options": "i"},
-                "unit_price": 0,
-                "tax": 0
+                "$or": [
+                    {"product_name": {"$regex": f"^{product_name}$", "$options": "i"}},
+                    {"product_id": product_id}
+                ]
             }
         }
     })
@@ -43,7 +44,13 @@ async def update_sales_orders_on_inventory_change(product_name: str, product_id:
         new_total_price = 0.0
         
         for product in order.get("products", []):
-            if product.get("product_name", "").lower() == product_name.lower():
+            # Match by product_name OR product_id
+            product_matches = (
+                product.get("product_name", "").lower() == product_name.lower() or
+                product.get("product_id") == product_id
+            )
+            
+            if product_matches:
                 # ✅ Update all fields for the matching product
                 product["product_id"] = product_id  # Populate the product_id from inventory
                 product["product_status"] = "Stock-in"
@@ -79,8 +86,9 @@ async def update_sales_orders_on_inventory_change(product_name: str, product_id:
                 }
             }
         )
+        print(f"[INFO] ✅ Updated order {order.get('order_id')} from '{order.get('status')}' to 'Stock-in' for product: {product_name}")
     
-    print(f"[INFO] Updated preorder sales orders for product: {product_name}, assigned product_id: {product_id}, selling_price: {inventory_selling_price}, consumer_tax: {inventory_consumer_tax}")
+    print(f"[INFO] Updated preorder/stock-out sales orders for product: {product_name}, product_id: {product_id}, selling_price: {inventory_selling_price}, consumer_tax: {inventory_consumer_tax}")
 
 
 async def validate_purchase_order_preview(
@@ -232,6 +240,15 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
             existing_quantity = existing_product.get("quantity", 0)
             new_quantity = existing_quantity + data.received_quantity
             
+            # ✅ Get seller returnability info from purchase order
+            seller_return_conditions = base_order.get("return_conditions", [])
+            is_seller_returnable = base_order.get("returnable", False)
+            
+            # ✅ Auto-correct: If seller_return_conditions exist but is_seller_returnable is False, set it to True
+            if seller_return_conditions and len(seller_return_conditions) > 0 and not is_seller_returnable:
+                is_seller_returnable = True
+                print(f"[DEBUG] Auto-corrected product-level is_seller_returnable to True for existing product based on conditions: {seller_return_conditions}")
+            
             # Update existing product (average_price will be calculated after items are added)
             await db.Inventory.update_one(
                 {"product_id": product_id, "store_id": store_id},
@@ -241,6 +258,12 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                         "min_stock": data.min_quantity or existing_product.get("min_stock", 4),
                         "status": "Stock-in",
                         "type": "order",  # ✅ Set to 'order' when validated and added to inventory
+                        # ✅ Update seller returnability fields
+                        "is_seller_returnable": is_seller_returnable,
+                        "seller_return_conditions": seller_return_conditions,
+                        # ✅ Update consumer returnability fields
+                        "is_consumer_returnable": data.is_consumer_returnable,
+                        "consumer_return_conditions": data.consumer_return_conditions if data.consumer_return_conditions else [],
                         "updated_at": datetime.utcnow()
                     }
                 }
@@ -250,6 +273,15 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
         else:
             # Product doesn't exist - CREATE new one
             product_id = await _next_id(db.Inventory, "product_id", "PROD", store_id)
+            
+            # ✅ Get seller returnability info from purchase order
+            seller_return_conditions = base_order.get("return_conditions", [])
+            is_seller_returnable = base_order.get("returnable", False)
+            
+            # ✅ Auto-correct: If seller_return_conditions exist but is_seller_returnable is False, set it to True
+            if seller_return_conditions and len(seller_return_conditions) > 0 and not is_seller_returnable:
+                is_seller_returnable = True
+                print(f"[DEBUG] Auto-corrected product-level is_seller_returnable to True based on conditions: {seller_return_conditions}")
             
             # Create Product using admin model (clean structure) 
             product_dict = {
@@ -267,6 +299,12 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 "min_stock": data.min_quantity or 4,
                 "status": "Stock-in",
                 "type": "order",  # ✅ Set to 'order' when validated and added to inventory
+                # ✅ Add seller returnability fields to product
+                "is_seller_returnable": is_seller_returnable,
+                "seller_return_conditions": seller_return_conditions,
+                # ✅ Add consumer returnability fields
+                "is_consumer_returnable": data.is_consumer_returnable,
+                "consumer_return_conditions": data.consumer_return_conditions if data.consumer_return_conditions else [],
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow()
             }
@@ -333,6 +371,11 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                 item_consumer_return_conditions = getattr(item_detail, "consumer_return_conditions", data.consumer_return_conditions or [])
                 item_is_seller_returnable = getattr(item_detail, "is_seller_returnable", base_order.get("returnable", False))
                 item_seller_return_conditions = getattr(item_detail, "seller_return_conditions", base_order.get("return_conditions", []))
+            
+            # ✅ Auto-correct: If seller_return_conditions exist but is_seller_returnable is False, set it to True
+            if item_seller_return_conditions and len(item_seller_return_conditions) > 0 and not item_is_seller_returnable:
+                item_is_seller_returnable = True
+                # print(f"[DEBUG] Auto-corrected is_seller_returnable to True for item based on conditions: {item_seller_return_conditions}")
             
             # Get unit_price for the item
             unit_price_value = item_detail.get("unit_price") if isinstance(item_detail, dict) else item_detail.unit_price
@@ -401,6 +444,10 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                     consumer_return_conditions = getattr(item_detail, "consumer_return_conditions", data.consumer_return_conditions or [])
                     is_seller_returnable = getattr(item_detail, "is_seller_returnable", False)
                     seller_return_conditions = getattr(item_detail, "seller_return_conditions", [])
+                
+                # ✅ Auto-correct: If seller_return_conditions exist but is_seller_returnable is False, set it to True
+                if seller_return_conditions and len(seller_return_conditions) > 0 and not is_seller_returnable:
+                    is_seller_returnable = True
                 
                 # Create ProductItem with full vendor and warranty info
                 loss_item_data = {
@@ -478,6 +525,10 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
                     consumer_return_conditions = getattr(item_detail, "consumer_return_conditions", data.consumer_return_conditions or [])
                     is_seller_returnable = getattr(item_detail, "is_seller_returnable", base_order.get("returnable", False))
                     seller_return_conditions = getattr(item_detail, "seller_return_conditions", base_order.get("return_conditions", []))
+                
+                # ✅ Auto-correct: If seller_return_conditions exist but is_seller_returnable is False, set it to True
+                if seller_return_conditions and len(seller_return_conditions) > 0 and not is_seller_returnable:
+                    is_seller_returnable = True
                 
                 # Create ProductItem with full vendor and warranty info
                 return_item_data = {
@@ -774,7 +825,15 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
     # --- Update PurchaseOrder validation_status to "completed" ---
     await db["PurchaseOrders"].update_one(
         {"order_id": data.order_id},
-        {"$set": {"validation_status": "Completed", "last_updated": str(datetime.now())}}
+        {
+            "$set": {
+                "validation_status": "Completed", 
+                "last_updated": str(datetime.now()),
+                "is_product_damaged": data.is_product_damaged,
+                "received_status": "Received",
+                "received_quantity": data.received_quantity
+            }
+        }
     )
 
     return final_doc

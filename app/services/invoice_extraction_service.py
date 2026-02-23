@@ -532,7 +532,7 @@ async def extract_invoice_data(
         response_data.vendor = VendorModel(**vendor_data)
         print("\n Vendor data extraction complete!")
     
-    if extraction_type in [ExtractionType.ALL, ExtractionType.CUSTOMER]:
+    if extraction_type in [ExtractionType.ALL, ExtractionType.CUSTOMER, ExtractionType.CUSTOMER_ITEMS]:
         print(" Extracting customer data...")
         customer_data = extract_customer_fields(full_text)
         
@@ -584,7 +584,7 @@ async def extract_invoice_data(
         
         response_data.payment = PaymentModel(**payment_data)
     
-    if extraction_type in [ExtractionType.ALL, ExtractionType.ITEMS]:
+    if extraction_type in [ExtractionType.ALL, ExtractionType.ITEMS, ExtractionType.CUSTOMER_ITEMS]:
         print(" Extracting line items...")
         # Items extraction from tables (basic)
         items_list = []

@@ -7,6 +7,7 @@ from fastapi import HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from app.utils.sales_utils import build_product_detail, parse_return_status, parse_status_string
 from app.utils.sold_order_pdf_utils import generate_sold_order_pdf
+from app.utils.received_order_pdf_utils import generate_received_order_pdf
 from bson.son import SON
 from datetime import datetime,timezone
 from app.utils.inventory_sync import sync_inventory_on_change
@@ -70,67 +71,61 @@ def calculate_product_total_price(unit_price: float, tax: float, quantity: int) 
 
 
 async def get_all_sales_orders(store_id: str):
-    cursor = db.SalesOrders.find(
-        {"order_status": "0", "store_id": store_id},
-        {"_id": 0}
-    ).sort([("_id", -1)])   # ✅ latest first
+    """
+    Fetch sales orders history.
+    - READ ONLY
+    - NO inventory queries
+    - NO recalculations
+    - SINGLE DB CALL
+    """
 
-    orders = await cursor.to_list(length=None)
+    # ✅ 1 DB READ ONLY
+    orders = await db.SalesOrders.find(
+        {"store_id": store_id},
+        {"_id": 0}
+    ).sort([("_id", -1)]).to_list(length=None)
 
     for order in orders:
         updated_products = []
+
         for product in order.get("products", []):
-            product_id = product.get("product_id")
-            ordered_quantity = int(product.get("order_quantity", 0))
-            item_ids = product.get("item_ids", [])
+            # ✅ Use snapshot values stored at order time
+            product_data = {
+                "product_id": product.get("product_id"),
+                "product_name": product.get("product_name"),
+                "order_quantity": int(product.get("order_quantity", 0)),
+                "unit_price": float(product.get("unit_price", 0)),
+                "tax": float(product.get("tax", 0)),
+                "product_status": product.get("product_status", "Unknown"),
+                "item_ids": product.get("item_ids", []),
+            }
 
-            # ✅ Count available items from ProductItems collection (this is the source of truth)
-            available_items_count = await db.ProductItems.count_documents({
-                "product_id": product_id,
-                "store_id": store_id,
-                "status": "available"
-            })
+            # ✅ UI helpers (NO DB CALLS)
+            item_ids = product_data["item_ids"]
+            product_data["item_count"] = len(item_ids)
+            product_data["has_item_details"] = bool(item_ids)
 
-            # Determine product_status based on available items
-            # Business rule: if available quantity is 1 (or 0), mark Stock-out
-            product_status = "Stock-out" if available_items_count <= 1 else "Stock-in"
-            product["product_status"] = product_status
-            
-            # ✅ Calculate average selling_price from available items using helper function
-            avg_selling_price = await calculate_average_selling_price_from_items(product_id, store_id)
-            product["unit_price"] = avg_selling_price  # Set to 0 if no selling_price exists
-            
-            # ✅ ITEM-BASED APPROACH: Add item details for tracking (only basic info for list view)
-            if item_ids:
-                product["item_count"] = len(item_ids)
-                product["has_item_details"] = True
-            else:
-                product["item_count"] = 0
-                product["has_item_details"] = False
-            
-            updated_products.append(product)
+            updated_products.append(product_data)
 
-        # Replace products list
+        # Replace products list safely
         order["products"] = updated_products
-        
-        # ✅ Recalculate total_order_price dynamically
-        total_order_price = 0.0
-        for product in updated_products:
-            unit_price = float(product.get("unit_price", 0))
-            # tax = float(product.get("tax", 0))
-            quantity = int(product.get("order_quantity", 0))
-            product_total =unit_price * quantity
-            total_order_price += product_total
-        
-        order["total_order_price"] = round(total_order_price, 2)
 
-        # Convert status field
+        # ✅ Use stored total_order_price (NO recalculation)
+        order["total_order_price"] = float(
+            order.get("total_order_price", 0)
+        )
+
+        # ✅ Include currency field
+        order["currency"] = order.get("currency", "INR")
+
+        # ✅ Parse order status (existing logic preserved)
         order["status"] = parse_status_string(order.get("status", "0"))
 
-        # Clean up order_status
+        # Cleanup (existing behavior)
         order.pop("order_status", None)
 
     return orders
+
 
 
 async def get_all_sold_orders(store_id: str):
@@ -164,16 +159,19 @@ async def get_all_sold_orders(store_id: str):
         
         order["products"] = updated_products
         
-        # ✅ Recalculate total_order_price dynamically
+        # ✅ Recalculate total_order_price dynamically using selling_price
         total_order_price = 0.0
         for product in updated_products:
-            unit_price = float(product.get("unit_price", 0))
+            selling_price = float(product.get("selling_price", 0))
             tax = float(product.get("tax", 0))
             quantity = int(product.get("order_quantity", 0))
-            product_total = calculate_product_total_price(unit_price, tax, quantity)
+            product_total = calculate_product_total_price(selling_price, tax, quantity)
             total_order_price += product_total
         
-        order["total_order_price"] = round(total_order_price, 2)
+        # ✅ Add shipping charges to total if present
+        shipping_charges = float(order.get("shipping_charges", 0))
+        order["shipping_charges"] = shipping_charges
+        order["total_order_price"] = round(total_order_price + shipping_charges, 2)
         
         # Convert order_status to status text
         order["status"] = parse_status_string(order["order_status"])
@@ -184,13 +182,32 @@ async def get_all_sold_orders(store_id: str):
 
 
 async def fetch_order_and_validate(order_id: str, store_id: str):
+    # ✅ Fetch order with basic validation
     order = await db.SalesOrders.find_one({
         "order_id": order_id,
         "store_id": store_id,
-        "order_status": "0"   # Make sure using correct field
+        "order_status": "0"   # Not yet sold
     },{"_id": 0})
+    
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found or already sold.")
+        # Check if order exists but is already sold
+        existing_order = await db.SalesOrders.find_one({
+            "order_id": order_id,
+            "store_id": store_id
+        }, {"order_status": 1, "quotation_status": 1, "_id": 0})
+        
+        if existing_order:
+            if existing_order.get("order_status") == "1":
+                raise HTTPException(status_code=404, detail="Order already sold.")
+            elif existing_order.get("quotation_status") == "completed":
+                raise HTTPException(status_code=404, detail="Quotation already completed.")
+        
+        raise HTTPException(status_code=404, detail="Order not found.")
+    
+    # Additional check: if order has quotation_status field, verify it's not completed
+    if order.get("quotation_status") == "completed":
+        raise HTTPException(status_code=404, detail="Quotation already completed.")
+    
     return order
 
 async def update_inventory_for_order(order, store_id: str, tax: float = None):
@@ -326,20 +343,16 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
                 update_data
             )
             print(f"✅ [SELL] Marked item {item_id} as sold - Modified count: {result.modified_count}")
-            
-            # Verify the update actually worked
-            verify_item = await db.ProductItems.find_one({"item_id": item_id, "store_id": store_id})
-            # print(f"🔍 [SELL] Verified item {item_id} status after update: {verify_item.get('status')}, store: {verify_item.get('store_id')}")
 
         # Store the sold items for this product
         sold_items_map[product_id] = sold_item_ids
-        print(f"✅ [SELL] Sold {len(sold_item_ids)} items for product {product_id}")
+        print(f"✅ [SELL] Sold {len(sold_item_ids)} items for product {product_id}: {sold_item_ids}")
 
         # ✅ DEBUG: Check ALL items for this product to see actual statuses
-        all_items_debug = await db.ProductItems.find({
-            "product_id": product_id,
-            "store_id": store_id
-        }, {"item_id": 1, "status": 1, "_id": 0}).to_list(None)
+        # all_items_debug = await db.ProductItems.find({
+        #     "product_id": product_id,
+        #     "store_id": store_id
+        # }, {"item_id": 1, "status": 1, "_id": 0}).to_list(None)
         # print(f"🔍 [SELL] ALL items for {product_id} in {store_id}: {all_items_debug}")
 
         # ✅ Update product quantity (count remaining available items)
@@ -368,6 +381,7 @@ async def update_inventory_for_order(order, store_id: str, tax: float = None):
     return sold_items_map
 
 async def mark_order_status_as_sold(order_id: str, store_id: str):
+    # ✅ Updated to also set quotation_status to completed
     result = await db.SalesOrders.update_one(
         {
             "order_id": order_id,
@@ -375,12 +389,15 @@ async def mark_order_status_as_sold(order_id: str, store_id: str):
             "order_status": "0"
         },
         {
-            "$set": {"order_status": "1"}
+            "$set": {
+                "order_status": "1",
+                "quotation_status": "completed"
+            }
         }
     )
     return result.modified_count
 
-async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None, price: float = None, tax: float = None, payment_status: str = "Paid", background_tasks: BackgroundTasks = None):
+async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None, price: float = None, tax: float = None, payment_status: str = "Paid", background_tasks: BackgroundTasks = None, created_by: dict = None):
     order = await fetch_order_and_validate(order_id, store_id)
     
     # ✅ If quantity is provided from popup, update the order's quantity before processing
@@ -421,6 +438,18 @@ async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None,
     # Update the order with item information
     # ✅ IMPORTANT: order_status is ALWAYS "1" for sold orders, regardless of payment status
     # payment_status tracks whether payment was received ("Paid") or deferred ("Pay Later")
+    update_fields = {
+        "order_status": "1",  # Always "1" for sold orders
+        "payment_status": payment_status,  # Track payment separately
+        "products": updated_products,
+        "quotation_status": "completed",
+        "sold_at": datetime.now(timezone.utc),  # ✅ FIXED
+        "updated_at": datetime.now(timezone.utc)
+    }
+
+    if created_by:
+        update_fields["created_by"] = created_by
+
     await db.SalesOrders.update_one(
         {
             "order_id": order_id,
@@ -428,13 +457,7 @@ async def mark_order_as_sold(order_id: str, store_id: str, quantity: int = None,
             "order_status": "0"
         },
         {
-            "$set": {
-                "order_status": "1",  # Always "1" for sold orders
-                "payment_status": payment_status,  # Track payment separately
-                "products": updated_products,
-                "sold_at": datetime.now(timezone.utc),  # ✅ FIXED
-                "updated_at": datetime.now(timezone.utc)
-            }
+            "$set": update_fields
         }
     )
     
@@ -516,8 +539,9 @@ async def delete_order_by_id(order_id: str, store_id: str) -> int:
 # 🔹 Helper to find updated quantity
 def get_new_quantity_for_product(product_id: str, updated_products: list, default_quantity: int) -> int:
     for p in updated_products:
-        if p["product_id"] == product_id:
-            return p["quantity"]
+        if p.get("product_id") == product_id:
+            # Handle both 'quantity' and 'order_quantity' keys
+            return p.get("order_quantity") or p.get("quantity", default_quantity)
     return default_quantity
 
 # 🔹 Helper to rebuild products list and compute subtotal
@@ -528,19 +552,46 @@ async def rebuild_products_list(original_products: list, updated_products_input:
     for prod in original_products:
         product_id = prod.get("product_id")
         default_quantity = prod.get("order_quantity", 0)
-        new_quantity = get_new_quantity_for_product(product_id, updated_products_input, default_quantity)
+        
+        # Find if this product has updates in the input
+        updated_product = None
+        for p in updated_products_input:
+            if p.get("product_id") == product_id:
+                updated_product = p
+                break
+        
+        # Get quantity, price, and tax from updated data or use defaults
+        new_quantity = updated_product.get("order_quantity") or updated_product.get("quantity") if updated_product else default_quantity
+        new_unit_price = updated_product.get("unit_price") if updated_product else prod.get("unit_price")
+        new_tax = updated_product.get("tax") if updated_product else prod.get("tax")
 
         inventory_data = await fetch_inventory_details(product_id, store_id)
+        
+        # ✅ Use updated values if provided, otherwise use inventory defaults
+        final_unit_price = new_unit_price if new_unit_price is not None else inventory_data["unit_price"]
+        final_tax = new_tax if new_tax is not None else inventory_data["product_tax"]
+        
+        # ✅ Determine selling_price: if price was updated, use it; otherwise use existing selling_price or unit_price
+        # This ensures that price changes during sell flow are preserved in selling_price field
+        if updated_product and updated_product.get("unit_price") is not None:
+            # Price was explicitly updated in sell flow - use it as selling_price
+            final_selling_price = updated_product.get("unit_price")
+        else:
+            # No price update - preserve existing selling_price or fall back to unit_price
+            final_selling_price = prod.get("selling_price") or final_unit_price
 
         product_detail, total_with_tax = build_product_detail(
             inventory_item=inventory_data["inventory_item"],
             product_id=product_id,
-            unit_price=inventory_data["unit_price"],
-            product_tax=inventory_data["product_tax"],
+            unit_price=inventory_data["unit_price"],  # ✅ Always use original inventory price as unit_price
+            product_tax=final_tax,
             order_quantity=new_quantity,
             inventory_quantity=inventory_data["inventory_quantity"],
             consumer_return_conditions=inventory_data["consumer_return_conditions"],
-            selling_price=inventory_data["average_selling_price"]  # Pass customer-paid price
+            selling_price=final_selling_price,  # ✅ Use the updated price as selling_price (what customer pays)
+            seller_return_conditions=inventory_data["seller_return_conditions"],
+            is_seller_returnable=inventory_data["is_seller_returnable"],
+            is_consumer_returnable=inventory_data["is_consumer_returnable"]
         )
 
         subtotal += total_with_tax
@@ -556,6 +607,9 @@ def prepare_updated_order_data(updated_data: dict, updated_products: list, subto
     updated_data["store_id"] = store_id
     updated_data["order_id"] = order_id
     updated_data["customer_id"] = order.get("customer_id")
+    # Preserve currency from updated_data, fallback to existing order currency or INR
+    if "currency" not in updated_data:
+        updated_data["currency"] = order.get("currency", "INR")
     return updated_data
 
 # 🔹 Main function
@@ -787,17 +841,17 @@ async def get_product_details_service(store_id: str, product_id: Optional[str] =
     )
 
 async def get_sales_order_by_id(order_id: str, store_id: str):
+    # ✅ Allow fetching orders regardless of status (pending or sold)
     order = await db.SalesOrders.find_one(
          {
             "order_id": order_id,
-            "store_id": store_id,
-            "order_status": {"$in": ["0", "1"]},  # Allow both statuses
+            "store_id": store_id
         },
         {"_id": 0}
     )
 
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found or already processed.")
+        raise HTTPException(status_code=404, detail="Order not found.")
 
     updated_products = []
 
@@ -880,6 +934,9 @@ async def get_sales_order_by_id(order_id: str, store_id: str):
     
     order["total_order_price"] = round(total_order_price, 2)
     
+    # ✅ Include currency field
+    order["currency"] = order.get("currency", "INR")
+    
     order["status"] = parse_status_string(order.get("status", "0"))
 
     if "order_status" in order:
@@ -946,16 +1003,18 @@ async def get_sold_order_by_id(order_id: str, store_id: str):
     
     order["products"] = updated_products
     
-    # ✅ Recalculate total_order_price dynamically
+    # ✅ Recalculate total_order_price dynamically using selling_price
     total_order_price = 0.0
     for product in updated_products:
-        unit_price = float(product.get("unit_price", 0))
+        selling_price = float(product.get("selling_price", 0))
         tax = float(product.get("tax", 0))
         quantity = int(product.get("order_quantity", 0))
-        product_total = calculate_product_total_price(unit_price, tax, quantity)
+        product_total = calculate_product_total_price(selling_price, tax, quantity)
         total_order_price += product_total
     
-    order["total_order_price"] = round(total_order_price, 2)
+    # ✅ Add shipping charges to total if present
+    shipping_charges = float(order.get("shipping_charges", 0))
+    order["total_order_price"] = round(total_order_price + shipping_charges, 2)
     
     # Convert order_status to a readable status and remove original key
     order["status"] = parse_status_string(order.get("order_status", ""))
@@ -1108,6 +1167,48 @@ async def generate_sold_order_pdf_service(order_id: str, store_id: str):
             media_type='application/pdf',
             filename=f"SoldOrder_{order_id}.pdf",
             background=None  # File will be cleaned up after response
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating PDF: {str(e)}")
+
+
+async def generate_received_order_pdf_service(order_id: str, store_id: str):
+    """
+    Service function to generate PDF for a received order (quotation)
+    
+    Args:
+        order_id: The received order ID
+        store_id: The store ID
+        
+    Returns:
+        FileResponse: PDF file download response
+    """
+    # Fetch the received order from SalesOrders collection
+    order = await sales_orders_collection.find_one({
+        "order_id": order_id,
+        "store_id": store_id
+    }, {"_id": 0})
+    
+    if not order:
+        raise HTTPException(status_code=404, detail="Received order not found")
+    
+    # Fetch store name from Stores collection
+    store = await stores_collection.find_one({"store_id": store_id}, {"_id": 0, "store_name": 1})
+    if store and "store_name" in store:
+        order["store_name"] = store["store_name"]
+    else:
+        order["store_name"] = "-"
+    
+    # Generate PDF using temporary file
+    try:
+        pdf_path = generate_received_order_pdf(order, output_dir=None)
+        
+        # Return as downloadable file with automatic cleanup
+        return FileResponse(
+            path=pdf_path,
+            media_type='application/pdf',
+            filename=f"Quotation_{order_id}.pdf",
+            background=None
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating PDF: {str(e)}")

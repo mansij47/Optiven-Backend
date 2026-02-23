@@ -13,6 +13,7 @@ class LoginModel(BaseModel):
 class VendorModel(BaseModel):
     vendor_name: str
     email: EmailStr
+    secondary_email: Optional[EmailStr] = None
     phone_number: str
     vendor_store_name:Optional[str]= None
     vendor_store_address: str
@@ -26,6 +27,7 @@ class VendorModel(BaseModel):
 class VendorUpdate(BaseModel):
     vendor_name: Optional[str] = None
     email: Optional[EmailStr] = None
+    secondary_email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
     vendor_store_name: Optional[str] = None
     vendor_store_address: Optional[str] = None
@@ -64,6 +66,7 @@ class Contract(BaseModel):
     vendor_name: str
     vendor_store_name: Optional[str] = None
     vendor_email: Optional[str] = None
+    secondary_email: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
     pincode: Optional[str] = None
@@ -95,6 +98,7 @@ class ContractUpdate(BaseModel):
     vendor_name: Optional[str]= None
     vendor_store_name: Optional[str]= None
     vendor_email: Optional[EmailStr]= None
+    secondary_email: Optional[EmailStr]= None
     phone: Optional[str]= None
     address: Optional[str]= None
     pincode: Optional[str]= None
@@ -125,6 +129,8 @@ class ContractUpdate(BaseModel):
 class ContractStatusUpdate(BaseModel):
     action: Literal["accept", "decline", "revoke"]
     contract_id: str
+    vendor_email: Optional[str] = None
+    secondary_email: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -178,7 +184,10 @@ class ReturnToVendorDetail(BaseModel):
 class PurchaseOrderResponse(BaseModel):
     order_id: str
     contract_id: str
+    vendor_id: Optional[str] = None
     vendor_name:str  = None
+    vendor_email: Optional[str] = None
+    secondary_email: Optional[str] = None
     delivery_date: str
     received_status: str
     validation_status: str
@@ -197,7 +206,10 @@ class PurchaseOrderResponse(BaseModel):
 class PurchaseOrderDetailResponse(BaseModel):
     order_id: str
     contract_id: str
+    vendor_id: Optional[str] = None
     vendor_name: Optional[str] = None
+    vendor_email: Optional[str] = None
+    secondary_email: Optional[str] = None
     delivery_date: str
     validation_status: str
     received_status: str
@@ -269,6 +281,7 @@ class ReturnOrderDetail(BaseModel):
     reason: str
     returned_amount: Optional[float] = None
     store_id: str
+    destination: Optional[str] = None  # ✅ Track where the return went (Inventory, LossOrders, ReturnToVendor)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -415,3 +428,12 @@ class PurchaseOrderSubmitRequest(BaseModel):
     type: Optional[str] = "order"  # "order" or "preorder" - defaults to "order" when validated    
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# Purchase Order Email
+class SendPurchaseOrderEmail(BaseModel):
+    order_id: str
+    recipient_emails: List[EmailStr]  # Can send to vendor_email and/or secondary_email
+    subject: Optional[str] = "Purchase Order"
+    message: Optional[str] = None  # Optional custom message
+    created_at: datetime = Field(default_factory=datetime.utcnow)

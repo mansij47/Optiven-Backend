@@ -99,14 +99,34 @@ async def mark_order_as_sold(order_id: str, payload: SellOrderPayload, request: 
     if not store_id:
         raise HTTPException(status_code=400, detail="Store ID missing in token.")
 
+    # Update order with all products data before marking as sold
+    if payload.products:
+        # Build the update payload with all products
+        update_payload = {
+            "products": [
+                {
+                    "product_id": prod.product_id,
+                    "product_name": prod.product_name,
+                    "order_quantity": prod.quantity,
+                    "unit_price": prod.unit_price,
+                    "tax": prod.tax,
+                }
+                for prod in payload.products
+            ],
+            "shipping_charges": payload.shipping_charges,
+        }
+        # Update the order with new product quantities/prices before marking as sold
+        await sales_get_update_services.update_sales_order(order_id, store_id, update_payload)
+    
     updated_count = await sales_get_update_services.mark_order_as_sold(
         order_id, 
         store_id,
-        quantity=payload.quantity,
-        price=payload.price,
-        tax=payload.tax,
-        payment_status=payload.payment_status,  # ✅ Add payment status
-        background_tasks=background_tasks  # ✅ Pass background tasks
+        quantity=None,  # Not used anymore, we updated the order above
+        price=None,
+        tax=None,
+        payment_status=payload.payment_status,
+        background_tasks=background_tasks,
+        created_by=payload.created_by
     )
 
     if updated_count == 0:
@@ -215,6 +235,23 @@ async def download_sold_order_pdf(order_id: str, request: Request):
     return await sales_get_update_services.generate_sold_order_pdf_service(order_id, store_id)
 
 
+@router.get("/orders/received/{order_id}/download-pdf")
+async def download_received_order_pdf(order_id: str, request: Request):
+    """
+    Download received order (quotation) as PDF
+    """
+    user = request.state.user
+
+    if not user or user.get("role") not in ["admin", "sales"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    return await sales_get_update_services.generate_received_order_pdf_service(order_id, store_id)
+
+
 @router.get("/all") 
 async def fetch_all_products_route(request: Request):
     user = request.state.user
@@ -253,7 +290,8 @@ async def raise_request_order(request_model: RequestOrderModel, request: Request
         estimate_date=request_model.estimate_date,
         org_id=org_id,
         store_id=store_id,
-        requester=requester
+        requester=requester,
+        quantity_override=request_model.quantity  # ✅ Pass the user-provided quantity
     )
 
     # ✅ Check if the order is a preorder to send priority notification
@@ -269,12 +307,12 @@ async def raise_request_order(request_model: RequestOrderModel, request: Request
         from app.services.notification_service import create_notification
         
         if is_preorder:
-            notification_title = " PRIORITY: Preorder Request from Sales"
-            notification_message = f"Sales has raised a PREORDER request (Request ID: {request_id})."
+            notification_title = " Priority: Preorder Request Raised"
+            notification_message = f"Preorder request created by Sales ( {request_id})."
             notification_type = "Preorder Request"
         else:
-            notification_title = "New Procurement Request from Sales"
-            notification_message = f"Sales has raised a new procurement request (Request ID: {request_id})."
+            notification_title = "New Request from Sales"
+            notification_message = f"Sales has raised a new request ( {request_id})."
             notification_type = "Order Request"
         
        
@@ -519,6 +557,30 @@ async def get_customer_details(customer_id: str, request: Request):
     return customer
 
 
+@router.get("/validate-phone/{phone_number}")
+async def validate_customer_phone(phone_number: str, request: Request):
+    """Validate phone number and return existing customer details if found"""
+    user = request.state.user
+
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    from app.services.sales_add_raise_services import find_customer_by_phone
+    existing_customer = await find_customer_by_phone(phone_number, store_id=store_id)
+    
+    if existing_customer:
+        return {
+            "exists": True,
+            "customer": existing_customer
+        }
+    
+    return {"exists": False}
+
+
 @router.get("/customers/search")
 async def search_customers(query: str = Query(..., min_length=1), request: Request = None):
     """Search customers by name, email, or phone"""
@@ -533,3 +595,51 @@ async def search_customers(query: str = Query(..., min_length=1), request: Reque
 
     customers = await customer_services.search_customers(query, store_id=store_id)
     return {"customers": customers}
+
+
+@router.post("/customers")
+async def create_customer(customer: dict, request: Request):
+    """Create a new customer"""
+    user = request.state.user
+
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    result = await customer_services.create_customer(customer, store_id=store_id)
+    return result
+
+
+@router.patch("/customers/{customer_phone}")
+async def update_customer(customer_phone: str, customer_data: dict, request: Request):
+    """Update customer information by phone number"""
+    user = request.state.user
+
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    result = await customer_services.update_customer(customer_phone, customer_data, store_id=store_id)
+    return result
+
+
+@router.delete("/customers/{customer_phone}")
+async def delete_customer(customer_phone: str, request: Request):
+    """Delete customer and all associated orders"""
+    user = request.state.user
+
+    if not user or user.get("role") not in ["sales", "admin"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Sales or Admin access required.")
+
+    store_id = user.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=400, detail="Store ID missing in token.")
+
+    result = await customer_services.delete_customer(customer_phone, store_id=store_id)
+    return result
