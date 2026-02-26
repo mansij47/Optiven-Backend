@@ -30,7 +30,9 @@ from app.services.notification_service import (
     create_notification,   
     get_all_notifications,
     update_notification_by_id,
-    delete_notification_by_id
+    delete_notification_by_id,
+    permanently_delete_notification_by_id,
+    cleanup_old_deleted_notifications
 )
 
 # Importing the admin setup model and service
@@ -133,19 +135,28 @@ async def send_notification(
 
 
 @router.get("/notifications")
-async def get_notifications(request: Request, status: Optional[int] = None):
+async def get_notifications(request: Request, status: Optional[int] = None, show_deleted: bool = False):
     user = request.state.user  # Token-decoded user info: id, role, etc.
     try:
-        return await get_all_notifications(user, status)
+        return await get_all_notifications(user, status, show_deleted)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-# update the notifaction like read or delete
-@router.patch("/notifications/{notification_id}")
+# update the notification like read or delete (using PUT)
+@router.put("/notifications/{notification_id}")
 async def update_notification(request: Request, notification_id: str, update_data: NotificationUpdate):
     user = request.state.user
+    user_id = str(user.get("id"))
+    user_email = user.get("email")
+    
+    print(f"🔍 Route: Updating notification {notification_id}")
+    print(f"   User ID from token: {user_id}")
+    print(f"   User Email from token: {user_email}")
+    print(f"   Update data: {update_data.dict(exclude_unset=True)}")
+    
     try:
-        return await update_notification_by_id(notification_id, update_data)
+        # ✅ RE-ENABLED: Verify notification belongs to the user before updating (SECURITY)
+        return await update_notification_by_id(notification_id, update_data, user_id=user_id, user_email=user_email)
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -154,12 +165,79 @@ async def update_notification(request: Request, notification_id: str, update_dat
 @router.delete("/notifications/{notification_id}")
 async def delete_notification(request: Request, notification_id: str):
     user = request.state.user
+    user_id = str(user.get("id"))
+    user_email = user.get("email")
+    
     try:
-        return await delete_notification_by_id(notification_id)
+        # ✅ SECURITY: Only allow users to delete their own notifications
+        return await delete_notification_by_id(notification_id, user_id=user_id, user_email=user_email)
     except HTTPException as he:
         raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# Permanent delete from bin
+@router.delete("/notifications/{notification_id}/permanent")
+async def permanently_delete_notification(request: Request, notification_id: str):
+    user = request.state.user
+    user_id = str(user.get("id"))
+    user_email = user.get("email")
+    
+    try:
+        # ✅ SECURITY: Only allow users to permanently delete their own notifications from bin
+        return await permanently_delete_notification_by_id(notification_id, user_id=user_id, user_email=user_email)
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Manual cleanup of old deleted notifications (admin-triggered)
+@router.post("/notifications/cleanup")
+async def manual_cleanup_notifications(request: Request):
+    """
+    Manually trigger cleanup of notifications deleted more than 7 days ago.
+    Useful for testing or manual maintenance.
+    """
+    user = request.state.user
+    role = user.get("role")
+    
+    # Only admins can trigger manual cleanup
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can trigger cleanup")
+    
+    try:
+        result = await cleanup_old_deleted_notifications()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Test endpoint to verify notification routes are working
+@router.get("/notifications/test")
+async def test_notifications_endpoint(request: Request):
+    """
+    Test endpoint to verify notification routes are accessible.
+    Returns information about the current user and available methods.
+    """
+    user = request.state.user
+    return {
+        "status": "success",
+        "message": "Notification routes are working correctly",
+        "user": {
+            "id": str(user.get("id")),
+            "email": user.get("email"),
+            "role": user.get("role"),
+            "store_id": user.get("store_id")
+        },
+        "available_methods": {
+            "GET": "/api/admin/notifications - List all notifications",
+            "POST": "/api/admin/notification - Create new notification",
+            "PUT": "/api/admin/notifications/{id} - Update notification (mark as read)",
+            "DELETE": "/api/admin/notifications/{id} - Soft delete (move to bin)",
+            "DELETE_PERMANENT": "/api/admin/notifications/{id}/permanent - Permanent delete from bin"
+        },
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
 # Create a new category
 @router.post("/categories")
@@ -345,7 +423,7 @@ async def check_serial_number_exists(request: Request, serial_no: str):
 
 @router.patch("/edit/product/{product_id}")
 async def edit_product_patch(request: Request, product_id: str, data: Product.ProductUpdateModel):
-    # Admin role check
+    # Admin role check      
     user = request.state.user
     if user.get("role") not in ["admin"]:
         raise HTTPException(status_code=403, detail="Forbidden: Admin access required.")

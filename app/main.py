@@ -1,7 +1,7 @@
 
 from fastapi import FastAPI, Request, APIRouter
 from app.middlewares.jwt_middleware import JWTAuthMiddleware
-from app.routes import admin_routes, auth_routes, sales_routes, super_admin_routes, procurement_routes, invoice_routes
+from app.routes import admin_routes, auth_routes, sales_routes, super_admin_routes, procurement_routes, invoice_routes, files_routes
 from app.utils import routes_utils  # Common delete APIs
 from fastapi.middleware.cors import CORSMiddleware
 from app.utils.auth import decode_token
@@ -13,7 +13,8 @@ try:
     print(" Environment variables loaded")
 except ImportError:
     print("  python-dotenv not installed")
- 
+
+
 app = FastAPI(title="Optiven Backend")
 router = APIRouter()
 
@@ -24,21 +25,24 @@ router.include_router(procurement_routes.router, tags=["Procurement"], prefix="/
 router.include_router(sales_routes.router, tags=["Sales"], prefix="/api/sales")
 router.include_router(auth_routes.router, tags=["Auth"], prefix="/api/auth")
 router.include_router(invoice_routes.router, tags=["Invoice Extraction"], prefix="/api/invoice")
+router.include_router(files_routes.router, tags=["File Proxy"], prefix="/api")  # File proxy for Cloudinary
 router.include_router(routes_utils.router, tags=["Common Utils"], prefix="/api/utils")  # Common delete APIs
 
 app.include_router(router)
 
 origins = [
     "http://localhost:5173",  # local dev
+    "http://localhost:5174",  # local dev (alternative port)
     "https://optiven-frontend-1.onrender.com",  # production frontend
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,  # NOT "*"
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     allow_credentials=True,
+    expose_headers=["*"]
 )
 
 app.add_middleware(JWTAuthMiddleware)

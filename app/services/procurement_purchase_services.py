@@ -1,8 +1,13 @@
 from fastapi import HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from app.db import db
 from app.models.procurement_models import PurchaseOrderResponse, PurchaseOrderDetailResponse
 from app.utils.purchase_order_pdf_utils import generate_purchase_order_pdf_from_schema
+from app.services.cloudinary_service import (
+    upload_pdf_from_path,
+    stream_pdf_from_url,
+    is_cloudinary_configured
+)
 import os
 
 purchase_orders_collection = db["PurchaseOrders"]
@@ -87,14 +92,19 @@ async def mark_purchase_order_as_received(order_id: str) -> dict:
 
 async def generate_purchase_order_pdf_service(order_id: str, store_id: str):
     """
-    Generate PDF for a purchase order
+    Generate PDF for a purchase order.
+    
+    Flow:
+    1. Check if PDF URL exists in database (cached in Cloudinary)
+    2. If exists and valid, stream from Cloudinary
+    3. If not or invalid, generate PDF, upload to Cloudinary, save URL in DB, then stream
     
     Args:
         order_id: Purchase order ID
         store_id: Store ID for validation
         
     Returns:
-        FileResponse: PDF file response
+        StreamingResponse or FileResponse: PDF file response
     """
     # Fetch the order details
     order = await purchase_orders_collection.find_one(
@@ -103,6 +113,24 @@ async def generate_purchase_order_pdf_service(order_id: str, store_id: str):
     
     if not order:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
+    
+    # Check if PDF is already cached in Cloudinary
+    existing_pdf_url = order.get("pdf_url")
+    if existing_pdf_url and is_cloudinary_configured():
+        try:
+            print(f"✅ Using cached PDF from Cloudinary for order {order_id}")
+            return await stream_pdf_from_url(
+                cloudinary_url=existing_pdf_url,
+                filename=f"PurchaseOrder_{order_id}.pdf",
+                inline=False
+            )
+        except HTTPException as e:
+            # Cached URL is invalid (404 or other error) - clear it and regenerate
+            print(f"⚠️ Cached PDF URL invalid for order {order_id}: {e.detail}. Regenerating...")
+            await purchase_orders_collection.update_one(
+                {"order_id": order_id, "store_id": store_id},
+                {"$unset": {"pdf_url": ""}}
+            )
     
     # Fetch store name from Stores collection
     print(f"🔍 Fetching store name for store_id: {store_id}")
@@ -137,13 +165,46 @@ async def generate_purchase_order_pdf_service(order_id: str, store_id: str):
     # Create response model
     order_response = PurchaseOrderDetailResponse(**order)
     
-    # Generate PDF using temporary file (no permanent storage)
+    # Generate PDF
     try:
         pdf_path = generate_purchase_order_pdf_from_schema(order_response, output_dir=None)
         
         if not os.path.exists(pdf_path):
             raise HTTPException(status_code=500, detail="Failed to generate PDF")
         
+        # Upload to Cloudinary if configured
+        if is_cloudinary_configured():
+            print(f"📤 Uploading PDF to Cloudinary for order {order_id}")
+            upload_result = upload_pdf_from_path(
+                file_path=pdf_path,
+                folder="optiven_pdfs/purchase_orders",
+                public_id=f"PurchaseOrder_{order_id}"
+            )
+            
+            if upload_result and upload_result.get("secure_url"):
+                cloudinary_url = upload_result["secure_url"]
+                
+                # Save URL to database for future requests
+                await purchase_orders_collection.update_one(
+                    {"order_id": order_id, "store_id": store_id},
+                    {"$set": {"pdf_url": cloudinary_url}}
+                )
+                print(f"✅ PDF URL saved to database: {cloudinary_url}")
+                
+                # Return the local file directly (Cloudinary URL will be used on next request)
+                # This avoids CDN propagation delay issues
+                print(f"✅ Returning freshly generated PDF for order {order_id}")
+                return FileResponse(
+                    path=pdf_path,
+                    media_type='application/pdf',
+                    filename=f"PurchaseOrder_{order_id}.pdf",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=PurchaseOrder_{order_id}.pdf"
+                    }
+                )
+        
+        # Fallback: Return local file if Cloudinary upload failed or not configured
+        print(f"⚠️ Using local file fallback for order {order_id}")
         return FileResponse(
             path=pdf_path,
             media_type='application/pdf',
