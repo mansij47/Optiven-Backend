@@ -140,17 +140,19 @@ async def get_all_notifications(user: dict, status: Optional[int] = None, show_d
     email = user.get("email")
     store_id = user.get("store_id")
 
-    # OR conditions for receiver
-    or_conditions = [
-        {"receiver.id": user_id},
-        {"receiver.email": email}
-    ]
-
-    # Add store_id filtering to the query
+    # Build OR conditions for receiver matching
+    # Match by user ID OR email, always include store_id if available
     if store_id:
+        # If store_id exists, match: (user_id OR email) AND store_id
         or_conditions = [
             {"receiver.id": user_id, "receiver.store_id": store_id},
             {"receiver.email": email, "receiver.store_id": store_id}
+        ]
+    else:
+        # If no store_id, match by user_id OR email only
+        or_conditions = [
+            {"receiver.id": user_id},
+            {"receiver.email": email}
         ]
 
     query["$or"] = or_conditions
