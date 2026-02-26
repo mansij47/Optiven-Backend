@@ -1,9 +1,10 @@
-from fastapi import APIRouter, File, UploadFile, Query, HTTPException, Request
+from fastapi import APIRouter, File, UploadFile, Query, HTTPException, Request, BackgroundTasks
 from typing import List
 import tempfile
 import shutil
 from pathlib import Path
 from datetime import datetime
+import asyncio
 
 from app.models.invoice_model import (
     ExtractionType,
@@ -11,8 +12,42 @@ from app.models.invoice_model import (
     InvoiceDataModel
 )
 from app.services.invoice_extraction_service import extract_invoice_data
+from app.services.cloudinary_service import (
+    upload_pdf_from_path,
+    is_cloudinary_configured
+)
 
 router = APIRouter()
+
+
+def upload_to_cloudinary_background(file_path: str, filename: str):
+    """Background task to upload PDF to Cloudinary"""
+    try:
+        if is_cloudinary_configured():
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            base_name = Path(filename).stem
+            public_id = f"{base_name}_{timestamp}"
+            
+            print(f"📤 [Background] Uploading invoice PDF to Cloudinary: {filename}")
+            upload_result = upload_pdf_from_path(
+                file_path=file_path,
+                folder="optiven_pdfs/invoices",
+                public_id=public_id
+            )
+            
+            if upload_result and upload_result.get("secure_url"):
+                print(f"✅ [Background] Invoice PDF uploaded: {upload_result['secure_url']}")
+            
+            # Clean up temp file after upload
+            try:
+                import os
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print(f"🗑️ [Background] Cleaned up temp file: {file_path}")
+            except Exception as cleanup_error:
+                print(f"⚠️ [Background] Cleanup error: {cleanup_error}")
+    except Exception as e:
+        print(f"⚠️ [Background] Cloudinary upload failed: {e}")
 
 
 @router.get("/extraction-types")
@@ -34,6 +69,7 @@ async def get_extraction_types():
 @router.post("/extract", response_model=ExtractionResponse)
 async def extract_invoice(
     request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="PDF invoice file to extract"),
     extraction_type: ExtractionType = Query(
         ExtractionType.ALL,
@@ -104,6 +140,21 @@ async def extract_invoice(
             'extracted_by': user.get('username', 'unknown')
         }
         
+        # Upload PDF to Cloudinary in background (non-blocking)
+        if is_cloudinary_configured():
+            # Copy file to a persistent temp location for background upload
+            import os
+            persistent_temp = tempfile.mktemp(suffix='.pdf')
+            shutil.copy2(str(temp_file_path), persistent_temp)
+            
+            # Schedule background upload (won't block response)
+            background_tasks.add_task(
+                upload_to_cloudinary_background,
+                persistent_temp,
+                file.filename
+            )
+            metadata['cloudinary_upload'] = 'scheduled'
+        
         return ExtractionResponse(
             success=True,
             message=f"Invoice data extracted successfully ({extraction_type.value})",
@@ -137,6 +188,7 @@ async def extract_invoice(
 @router.post("/extract-multiple", response_model=ExtractionResponse)
 async def extract_multiple_types(
     request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="PDF invoice file to extract"),
     extraction_types: List[ExtractionType] = Query(
         ...,
@@ -170,7 +222,7 @@ async def extract_multiple_types(
     
     # If 'all' is in the list, just extract all
     if ExtractionType.ALL in extraction_types:
-        return await extract_invoice(request, file, ExtractionType.ALL, use_llm)
+        return await extract_invoice(request, background_tasks, file, ExtractionType.ALL, use_llm)
     
     # Extract all data once
     temp_dir = None
@@ -215,6 +267,19 @@ async def extract_multiple_types(
             'status': 'success',
             'extracted_by': user.get('username', 'unknown')
         }
+        
+        # Upload PDF to Cloudinary in background (non-blocking)
+        if is_cloudinary_configured():
+            import os
+            persistent_temp = tempfile.mktemp(suffix='.pdf')
+            shutil.copy2(str(temp_file_path), persistent_temp)
+            
+            background_tasks.add_task(
+                upload_to_cloudinary_background,
+                persistent_temp,
+                file.filename
+            )
+            metadata['cloudinary_upload'] = 'scheduled'
         
         return ExtractionResponse(
             success=True,

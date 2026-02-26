@@ -1,7 +1,8 @@
 import logging
 import uuid
+import os
 from fastapi import HTTPException,Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from bson import ObjectId
 from datetime import datetime
 from datetime import timedelta
@@ -10,6 +11,11 @@ from typing import Dict, List, Optional
 from app.models.procurement_models import Contract
 from app.utils.auth import verify_password, create_access_token
 from app.utils.contract_pdf_utils import generate_contract_pdf_from_schema
+from app.services.cloudinary_service import (
+    upload_pdf_from_path,
+    stream_pdf_from_url,
+    is_cloudinary_configured
+)
  
 from app.services.vendor_service import create_vendor
 from app.models.procurement_models import VendorModel
@@ -309,14 +315,19 @@ async def get_contract_by_id(contract_id: str, store_id: str):
 
 async def generate_contract_pdf_service(contract_id: str, store_id: str):
     """
-    Generate and return contract PDF
+    Generate and return contract PDF.
+    
+    Flow:
+    1. Check if PDF URL exists in database (cached in Cloudinary)
+    2. If exists and valid, stream from Cloudinary
+    3. If not or invalid, generate PDF, upload to Cloudinary, save URL in DB, then stream
     
     Args:
         contract_id: ID of the contract
         store_id: Store ID for authorization
         
     Returns:
-        FileResponse: PDF file for download
+        StreamingResponse or FileResponse: PDF file for download
     """
     # Fetch contract details from database
     contract = await contracts_collection.find_one(
@@ -326,6 +337,24 @@ async def generate_contract_pdf_service(contract_id: str, store_id: str):
     
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found.")
+    
+    # Check if PDF is already cached in Cloudinary
+    existing_pdf_url = contract.get("pdf_url")
+    if existing_pdf_url and is_cloudinary_configured():
+        try:
+            print(f"✅ Using cached PDF from Cloudinary for contract {contract_id}")
+            return await stream_pdf_from_url(
+                cloudinary_url=existing_pdf_url,
+                filename=f"Contract_{contract_id}.pdf",
+                inline=False
+            )
+        except HTTPException as e:
+            # Cached URL is invalid - clear it and regenerate
+            print(f"⚠️ Cached PDF URL invalid for contract {contract_id}: {e.detail}. Regenerating...")
+            await contracts_collection.update_one(
+                {"contract_id": contract_id, "store_id": store_id},
+                {"$unset": {"pdf_url": ""}}
+            )
     
     # Fetch store name from Stores collection
     print(f"🔍 Fetching store name for store_id: {store_id}")
@@ -342,7 +371,39 @@ async def generate_contract_pdf_service(contract_id: str, store_id: str):
     try:
         pdf_path = generate_contract_pdf_from_schema(contract)
         
-        # Return PDF as file response
+        # Upload to Cloudinary if configured
+        if is_cloudinary_configured():
+            print(f"📤 Uploading PDF to Cloudinary for contract {contract_id}")
+            upload_result = upload_pdf_from_path(
+                file_path=pdf_path,
+                folder="optiven_pdfs/contracts",
+                public_id=f"Contract_{contract_id}"
+            )
+            
+            if upload_result and upload_result.get("secure_url"):
+                cloudinary_url = upload_result["secure_url"]
+                
+                # Save URL to database for future requests
+                await contracts_collection.update_one(
+                    {"contract_id": contract_id, "store_id": store_id},
+                    {"$set": {"pdf_url": cloudinary_url}}
+                )
+                print(f"✅ PDF URL saved to database: {cloudinary_url}")
+                
+                # Return the local file directly (Cloudinary URL will be used on next request)
+                # This avoids CDN propagation delay issues
+                print(f"✅ Returning freshly generated PDF for contract {contract_id}")
+                return FileResponse(
+                    path=pdf_path,
+                    media_type="application/pdf",
+                    filename=f"Contract_{contract_id}.pdf",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=Contract_{contract_id}.pdf"
+                    }
+                )
+        
+        # Fallback: Return local file if Cloudinary upload failed or not configured
+        print(f"⚠️ Using local file fallback for contract {contract_id}")
         return FileResponse(
             path=pdf_path,
             media_type="application/pdf",

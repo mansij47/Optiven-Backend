@@ -1,13 +1,19 @@
+import os
 from typing import Optional
 from app.db import db
 from app.models.sales_model import ProductDetails, SalesOrderDetails, SalesProductItem
 from app.services.sales_add_raise_services import fetch_inventory_details
 from app.utils.tax_utils import calculate_product_total_with_tax
 from fastapi import HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from app.utils.sales_utils import build_product_detail, parse_return_status, parse_status_string
 from app.utils.sold_order_pdf_utils import generate_sold_order_pdf
 from app.utils.received_order_pdf_utils import generate_received_order_pdf
+from app.services.cloudinary_service import (
+    upload_pdf_from_path,
+    stream_pdf_from_url,
+    is_cloudinary_configured
+)
 from bson.son import SON
 from datetime import datetime,timezone
 from app.utils.inventory_sync import sync_inventory_on_change
@@ -1125,20 +1131,49 @@ async def get_return_orders_by_month(store_id: str):
 
 async def generate_sold_order_pdf_service(order_id: str, store_id: str):
     """
-    Service function to generate PDF for a sold order
+    Service function to generate PDF for a sold order.
+    
+    Flow:
+    1. Check if PDF URL exists in database (cached in Cloudinary)
+    2. If exists and valid, stream from Cloudinary
+    3. If not or invalid, generate PDF, upload to Cloudinary, save URL in DB, then stream
     
     Args:
         order_id: The sold order ID
         store_id: The store ID
         
     Returns:
-        FileResponse: PDF file download response
+        StreamingResponse or FileResponse: PDF file download response
     """
     # Fetch the sold order using existing function
     order_data = await get_sold_order_by_id(order_id, store_id)
     
     if not order_data:
         raise HTTPException(status_code=404, detail="Sold order not found")
+    
+    # Check if PDF is already cached in Cloudinary
+    # We need to fetch from DB again to check pdf_url since get_sold_order_by_id may not include it
+    order_with_url = await sales_orders_collection.find_one(
+        {"order_id": order_id, "store_id": store_id, "status": "sold"},
+        {"_id": 0, "pdf_url": 1}
+    )
+    
+    existing_pdf_url = order_with_url.get("pdf_url") if order_with_url else None
+    if existing_pdf_url and is_cloudinary_configured():
+        try:
+            print(f"✅ Using cached PDF from Cloudinary for sold order {order_id}")
+            return await stream_pdf_from_url(
+                cloudinary_url=existing_pdf_url,
+                filename=f"Invoice_{order_id}.pdf",
+                inline=False
+            )
+        except HTTPException as e:
+            # Cached URL is invalid - clear it and regenerate
+            print(f"⚠️ Cached PDF URL invalid for sold order {order_id}: {e.detail}. Regenerating...")
+            await sales_orders_collection.update_one(
+                {"order_id": order_id, "store_id": store_id, "status": "sold"},
+                {"$unset": {"pdf_url": ""}}
+            )
     
     # Fetch store name from Stores collection
     print(f"🔍 Fetching store name for store_id: {store_id}")
@@ -1157,16 +1192,48 @@ async def generate_sold_order_pdf_service(order_id: str, store_id: str):
     if 'status' not in order_data:
         order_data['status'] = 'Sold'
     
-    # Generate PDF using temporary file (no permanent storage)
+    # Generate PDF
     try:
         pdf_path = generate_sold_order_pdf(order_data, output_dir=None)
         
-        # Return as downloadable file with automatic cleanup
+        # Upload to Cloudinary if configured
+        if is_cloudinary_configured():
+            print(f"📤 Uploading PDF to Cloudinary for sold order {order_id}")
+            upload_result = upload_pdf_from_path(
+                file_path=pdf_path,
+                folder="optiven_pdfs/sold_orders",
+                public_id=f"Invoice_{order_id}"
+            )
+            
+            if upload_result and upload_result.get("secure_url"):
+                cloudinary_url = upload_result["secure_url"]
+                
+                # Save URL to database for future requests
+                await sales_orders_collection.update_one(
+                    {"order_id": order_id, "store_id": store_id, "status": "sold"},
+                    {"$set": {"pdf_url": cloudinary_url}}
+                )
+                print(f"✅ PDF URL saved to database: {cloudinary_url}")
+                
+                # Return the local file directly (Cloudinary URL will be used on next request)
+                # This avoids CDN propagation delay issues
+                print(f"✅ Returning freshly generated PDF for sold order {order_id}")
+                return FileResponse(
+                    path=pdf_path,
+                    media_type='application/pdf',
+                    filename=f"Invoice_{order_id}.pdf",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=Invoice_{order_id}.pdf"
+                    }
+                )
+        
+        # Fallback: Return local file if Cloudinary upload failed or not configured
+        print(f"⚠️ Using local file fallback for sold order {order_id}")
         return FileResponse(
             path=pdf_path,
             media_type='application/pdf',
-            filename=f"SoldOrder_{order_id}.pdf",
-            background=None  # File will be cleaned up after response
+            filename=f"Invoice_{order_id}.pdf",
+            background=None
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating PDF: {str(e)}")
@@ -1174,14 +1241,19 @@ async def generate_sold_order_pdf_service(order_id: str, store_id: str):
 
 async def generate_received_order_pdf_service(order_id: str, store_id: str):
     """
-    Service function to generate PDF for a received order (quotation)
+    Service function to generate PDF for a received order (quotation).
+    
+    Flow:
+    1. Check if PDF URL exists in database (cached in Cloudinary)
+    2. If exists and valid, stream from Cloudinary
+    3. If not or invalid, generate PDF, upload to Cloudinary, save URL in DB, then stream
     
     Args:
         order_id: The received order ID
         store_id: The store ID
         
     Returns:
-        FileResponse: PDF file download response
+        StreamingResponse or FileResponse: PDF file download response
     """
     # Fetch the received order from SalesOrders collection
     order = await sales_orders_collection.find_one({
@@ -1192,6 +1264,24 @@ async def generate_received_order_pdf_service(order_id: str, store_id: str):
     if not order:
         raise HTTPException(status_code=404, detail="Received order not found")
     
+    # Check if PDF is already cached in Cloudinary
+    existing_pdf_url = order.get("pdf_url")
+    if existing_pdf_url and is_cloudinary_configured():
+        try:
+            print(f"✅ Using cached PDF from Cloudinary for quotation {order_id}")
+            return await stream_pdf_from_url(
+                cloudinary_url=existing_pdf_url,
+                filename=f"Quotation_{order_id}.pdf",
+                inline=False
+            )
+        except HTTPException as e:
+            # Cached URL is invalid - clear it and regenerate
+            print(f"⚠️ Cached PDF URL invalid for quotation {order_id}: {e.detail}. Regenerating...")
+            await sales_orders_collection.update_one(
+                {"order_id": order_id, "store_id": store_id},
+                {"$unset": {"pdf_url": ""}}
+            )
+    
     # Fetch store name from Stores collection
     store = await stores_collection.find_one({"store_id": store_id}, {"_id": 0, "store_name": 1})
     if store and "store_name" in store:
@@ -1199,11 +1289,43 @@ async def generate_received_order_pdf_service(order_id: str, store_id: str):
     else:
         order["store_name"] = "-"
     
-    # Generate PDF using temporary file
+    # Generate PDF
     try:
         pdf_path = generate_received_order_pdf(order, output_dir=None)
         
-        # Return as downloadable file with automatic cleanup
+        # Upload to Cloudinary if configured
+        if is_cloudinary_configured():
+            print(f"📤 Uploading PDF to Cloudinary for quotation {order_id}")
+            upload_result = upload_pdf_from_path(
+                file_path=pdf_path,
+                folder="optiven_pdfs/quotations",
+                public_id=f"Quotation_{order_id}"
+            )
+            
+            if upload_result and upload_result.get("secure_url"):
+                cloudinary_url = upload_result["secure_url"]
+                
+                # Save URL to database for future requests
+                await sales_orders_collection.update_one(
+                    {"order_id": order_id, "store_id": store_id},
+                    {"$set": {"pdf_url": cloudinary_url}}
+                )
+                print(f"✅ PDF URL saved to database: {cloudinary_url}")
+                
+                # Return the local file directly (Cloudinary URL will be used on next request)
+                # This avoids CDN propagation delay issues
+                print(f"✅ Returning freshly generated PDF for quotation {order_id}")
+                return FileResponse(
+                    path=pdf_path,
+                    media_type='application/pdf',
+                    filename=f"Quotation_{order_id}.pdf",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=Quotation_{order_id}.pdf"
+                    }
+                )
+        
+        # Fallback: Return local file if Cloudinary upload failed or not configured
+        print(f"⚠️ Using local file fallback for quotation {order_id}")
         return FileResponse(
             path=pdf_path,
             media_type='application/pdf',
