@@ -149,9 +149,7 @@ async def update_notification(request: Request, notification_id: str, update_dat
     user_id = str(user.get("id"))
     user_email = user.get("email")
     
-    print(f"🔍 Route: Updating notification {notification_id}")
-    print(f"   User ID from token: {user_id}")
-    print(f"   User Email from token: {user_email}")
+    print(f" Route: Updating notification {notification_id}")
     print(f"   Update data: {update_data.dict(exclude_unset=True)}")
     
     try:
