@@ -124,12 +124,12 @@ async def get_all_notifications(user: dict, status: Optional[int] = None, show_d
         status: Optional status filter (0=unread, 1=read)
         show_deleted: If True, only show deleted notifications (Bin). If False, only show active.
     """
-    print(f"\n========== GET NOTIFICATIONS DEBUG ==========")
-    print(f" User ID: {user.get('id')}")
-    print(f" User Email: {user.get('email')}")
-    print(f" Store ID: {user.get('store_id')}")
-    print(f"Status filter: {status}")
-    print(f" Show deleted: {show_deleted}")
+    # print(f"\n========== GET NOTIFICATIONS DEBUG ==========")
+    # print(f" User ID: {user.get('id')}")
+    # print(f" User Email: {user.get('email')}")
+    # print(f" Store ID: {user.get('store_id')}")
+    # print(f"Status filter: {status}")
+    # print(f" Show deleted: {show_deleted}")
     
     query = {}
 
@@ -161,20 +161,19 @@ async def get_all_notifications(user: dict, status: Optional[int] = None, show_d
     if show_deleted:
         # Show only soft-deleted notifications (Bin tab)
         query["deletedAt"] = {"$exists": True}
-        print(f"🗑️  Query mode: BIN (only deleted notifications)")
+        # print(f"  Query mode: BIN ")
     else:
         # Show only non-deleted notifications (default)
         query["deletedAt"] = {"$exists": False}
-        print(f"📋 Query mode: ACTIVE (only non-deleted notifications)")
+        print(f" Query mode: ACTIVE ")
     
-    print(f"📋 Final MongoDB query: {query}")
 
     # ✅ Sort by ObjectId descending (latest first)
     notifications = await notifications_collection.find(query).sort(
         [("_id", -1)]
     ).to_list(length=None)
     
-    print(f"✅ Found {len(notifications)} notifications")
+    print(f" Found {len(notifications)} notifications")
 
     # Convert ObjectId and datetime to string
     for notif in notifications:
@@ -186,7 +185,7 @@ async def get_all_notifications(user: dict, status: Optional[int] = None, show_d
         if "deletedAt" in notif and notif["deletedAt"]:
             notif["deletedAt"] = notif["deletedAt"].isoformat()
     
-    print(f"========== END GET NOTIFICATIONS DEBUG ==========\n")
+ 
     return notifications
 
 
@@ -197,47 +196,44 @@ async def update_notification_by_id(notification_id: str, update_data, user_id: 
     Update notification by ID.
     If user_id/user_email is provided, verifies the notification belongs to that user (matches retrieval logic).
     """
-    print(f"\n========== UPDATE NOTIFICATION DEBUG ==========")
-    print(f"📥 Received notification_id: {notification_id}")
-    print(f"📥 Received notification_id type: {type(notification_id)}")
-    print(f"📥 Received notification_id length: {len(notification_id)}")
-    print(f"📥 Received user_id: {user_id}")
-    print(f"📥 Received user_email: {user_email}")
-    print(f"📥 Update data: {update_data}")
+    # print(f"\n========== UPDATE NOTIFICATION DEBUG ==========")
+    # print(f" Received notification_id: {notification_id}")
+    # print(f" Received notification_id type: {type(notification_id)}")
+    # print(f"Received notification_id length: {len(notification_id)}")
+    # print(f" Received user_id: {user_id}")
+    # print(f" Received user_email: {user_email}")
+    # print(f" Update data: {update_data}")
     
     try:
         # Validate ObjectId format
         try:
             obj_id = ObjectId(notification_id)
-            print(f"✅ Successfully converted to ObjectId: {obj_id}")
+            # print(f" Successfully converted to ObjectId: {obj_id}")
         except Exception as e:
-            print(f"❌ Failed to convert to ObjectId: {e}")
+            print(f" Failed to convert to ObjectId: {e}")
             raise HTTPException(status_code=400, detail="Invalid notification ID format")
         
         # First, find the notification without user check to debug
-        print(f"🔍 Searching for notification with _id: {obj_id}")
+        # print(f" Searching for notification with _id: {obj_id}")
         notif_check = await notifications_collection.find_one({"_id": obj_id})
         if notif_check:
-            print(f"✅ DEBUG: Notification found!")
-            print(f"   Notification _id: {notif_check.get('_id')}")
-            print(f"   Receiver ID in DB: {notif_check.get('receiver', {}).get('id')}")
-            print(f"   User ID from token: {user_id}")
-            if user_id:
-                print(f"   Match: {str(notif_check.get('receiver', {}).get('id')) == str(user_id)}")
-        else:
-            print(f"❌ DEBUG: Notification {notification_id} not found in DB at all")
-            print(f"   Checked with ObjectId: {obj_id}")
+            # print(f" DEBUG: Notification found!")
+            # print(f"   Notification _id: {notif_check.get('_id')}")
+            # print(f"   Receiver ID in DB: {notif_check.get('receiver', {}).get('id')}")
+            
+            
+      
             # Let's also search by notification_id field
-            notif_by_custom_id = await notifications_collection.find_one({"notification_id": notification_id})
-            if notif_by_custom_id:
-                print(f"🔍 Found by custom notification_id field!")
-                print(f"   MongoDB _id: {notif_by_custom_id.get('_id')}")
-            else:
-                print(f"   Also not found by notification_id field")
+            # notif_by_custom_id = await notifications_collection.find_one({"notification_id": notification_id})
+            # if notif_by_custom_id:
+            #     print(f" Found by custom notification_id field!")
+            #     print(f"   MongoDB _id: {notif_by_custom_id.get('_id')}")
+            # else:
+            #     print(f"   Also not found by notification_id field")
         
         # Build query - include user verification if user_id/user_email provided
         # This matches the same logic as get_all_notifications (ID OR email)
-        if user_id or user_email:
+          if user_id or user_email:
             or_conditions = []
             if user_id:
                 or_conditions.append({"receiver.id": user_id})
@@ -249,21 +245,21 @@ async def update_notification_by_id(notification_id: str, update_data, user_id: 
                 "_id": obj_id,
                 "$or": or_conditions
             }
-            print(f"🔍 Query with user verification (ID+Email): {query}")
+            # print(f" Query with user verification (ID+Email): {query}")
         else:
             query = {"_id": obj_id}
-            print(f"🔍 Query without user verification: {query}")
+            # print(f" Query without user verification: {query}")
         
         # Check if notification exists and belongs to user
         existing = await notifications_collection.find_one(query)
         if not existing:
-            print(f"❌ No notification found with query: {query}")
+            print(f" No notification found with query: {query}")
             if user_id:
                 raise HTTPException(status_code=404, detail="Notification not found or access denied")
             else:
                 raise HTTPException(status_code=404, detail="Notification not found")
         
-        print(f"✅ Found notification, proceeding with update")
+        # print(f" Found notification, proceeding with update")
         
         # Convert Pydantic model to dict, exclude unset fields
         update_dict = update_data.dict(exclude_unset=True) if hasattr(update_data, 'dict') else update_data
@@ -402,7 +398,7 @@ async def cleanup_old_deleted_notifications():
     
     deleted_count = result.deleted_count
     if deleted_count > 0:
-        print(f"🗑️ Cleanup: Permanently deleted {deleted_count} notification(s) older than 7 days")
+        print(f" Cleanup: Permanently deleted {deleted_count} notification(s) older than 7 days")
     
     return {
         "message": f"Cleanup completed. {deleted_count} notification(s) permanently deleted.",
