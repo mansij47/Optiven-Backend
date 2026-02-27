@@ -140,12 +140,24 @@ async def mark_order_as_sold(order_id: str, payload: SellOrderPayload, request: 
         "store_id": store_id
     }
 
-    # Use the dynamic message for notification
-    notification_message = "Order marked as sold successfully"
+    # Build dynamic notification message with product details
+    if payload.products and len(payload.products) > 0:
+        # Create product list string: "LED Tubelight (1), LED Bulb (2)"
+        product_details = ", ".join([
+            f"{prod.product_name} ({prod.quantity})"
+            for prod in payload.products
+        ])
+        notification_message = f"Order {order_id} sold: {product_details}"
+        notification_title = f"Order Sold - {order_id}"
+    else:
+        # Fallback if no product details available
+        notification_message = f"Order {order_id} marked as sold successfully"
+        notification_title = "Order Sold"
+    
     notification = NotificationBase(
         sender=UserInfo(**sender_info),
         type_of_notification="Order Sold",
-        title="Order Sold",
+        title=notification_title,
         message=notification_message,
     )
 
