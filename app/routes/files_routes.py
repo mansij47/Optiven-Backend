@@ -1,45 +1,26 @@
 """
-File Proxy Routes
-Handles streaming of files from Cloudinary to users.
-Users access files through these endpoints - they never see Cloudinary URLs.
+File Routes
+Handles document download endpoints.
+Returns Cloudinary URLs for direct client-side downloads.
 """
 
-from fastapi import APIRouter, HTTPException, Request, Query
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Request
 from app.db import db
-from app.services.cloudinary_service import (
-    stream_pdf_from_url,
-    is_cloudinary_configured
-)
 
 router = APIRouter()
 
-# Collections that may have PDF URLs
-purchase_orders_collection = db["PurchaseOrders"]
+# Collection for contracts
 contracts_collection = db["Contracts"]
-sales_orders_collection = db["SalesOrders"]
-sold_orders_collection = db["SoldOrders"]
 
 
-@router.get("/files/{file_type}/{identifier}")
-async def get_file(
-    file_type: str,
-    identifier: str,
-    request: Request,
-    inline: bool = Query(False, description="If true, display in browser; if false, download")
+@router.get("/files/contract-document/{contract_id}")
+async def get_contract_uploaded_document(
+    contract_id: str,
+    request: Request
 ):
     """
-    Proxy endpoint for serving files stored in Cloudinary.
-    
-    Users access PDFs through this endpoint, hiding the Cloudinary URL.
-    
-    Args:
-        file_type: Type of document (purchase_order, contract, sold_order, quotation)
-        identifier: Unique identifier (order_id, contract_id, etc.)
-        inline: If true, display in browser; if false, force download
-        
-    Returns:
-        StreamingResponse with the PDF content
+    Get contract document URL - Returns URL for frontend to download directly.
+    PDF delivery is enabled in Cloudinary, so just return the stored URL.
     """
     # Get user from request state
     user = request.state.user
@@ -48,131 +29,35 @@ async def get_file(
     
     store_id = user.get("store_id")
     if not store_id:
-        raise HTTPException(status_code=400, detail="Store ID missing in token")
+        raise HTTPException(status_code=403, detail="Store ID required")
     
-    # Route to appropriate handler based on file type
-    handlers = {
-        "purchase_order": _get_purchase_order_pdf,
-        "contract": _get_contract_pdf,
-        "sold_order": _get_sold_order_pdf,
-        "quotation": _get_quotation_pdf,
-        "received_order": _get_quotation_pdf  # Alias for quotation
-    }
-    
-    handler = handlers.get(file_type.lower())
-    if not handler:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown file type: {file_type}. Valid types: {list(handlers.keys())}"
-        )
-    
-    return await handler(identifier, store_id, inline)
-
-
-async def _get_purchase_order_pdf(order_id: str, store_id: str, inline: bool):
-    """Fetch and stream purchase order PDF"""
-    order = await purchase_orders_collection.find_one(
-        {"order_id": order_id, "store_id": store_id},
-        {"_id": 0, "pdf_url": 1}
-    )
-    
-    if not order:
-        raise HTTPException(status_code=404, detail="Purchase order not found")
-    
-    pdf_url = order.get("pdf_url")
-    if not pdf_url:
-        raise HTTPException(
-            status_code=404,
-            detail="PDF not yet generated. Please download using the download button first."
-        )
-    
-    return await stream_pdf_from_url(
-        cloudinary_url=pdf_url,
-        filename=f"PurchaseOrder_{order_id}.pdf",
-        inline=inline
-    )
-
-
-async def _get_contract_pdf(contract_id: str, store_id: str, inline: bool):
-    """Fetch and stream contract PDF"""
+    # Fetch contract document URL from database
     contract = await contracts_collection.find_one(
         {"contract_id": contract_id, "store_id": store_id},
-        {"_id": 0, "pdf_url": 1}
+        {"_id": 0, "uploaded_document_url": 1, "vendor_name": 1, "product_name": 1}
     )
     
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
     
-    pdf_url = contract.get("pdf_url")
-    if not pdf_url:
-        raise HTTPException(
-            status_code=404,
-            detail="PDF not yet generated. Please download using the download button first."
-        )
+    document_url = contract.get("uploaded_document_url")
     
-    return await stream_pdf_from_url(
-        cloudinary_url=pdf_url,
-        filename=f"Contract_{contract_id}.pdf",
-        inline=inline
-    )
-
-
-async def _get_sold_order_pdf(order_id: str, store_id: str, inline: bool):
-    """Fetch and stream sold order PDF"""
-    # Sold orders are stored in SalesOrders collection with status='sold'
-    order = await sales_orders_collection.find_one(
-        {"order_id": order_id, "store_id": store_id, "status": "sold"},
-        {"_id": 0, "pdf_url": 1}
-    )
+    if not document_url:
+        raise HTTPException(status_code=404, detail="No document uploaded for this contract")
     
-    if not order:
-        raise HTTPException(status_code=404, detail="Sold order not found")
+    print(f"📄 Contract {contract_id} document URL: {document_url}")
     
-    pdf_url = order.get("pdf_url")
-    if not pdf_url:
-        raise HTTPException(
-            status_code=404,
-            detail="PDF not yet generated. Please download using the download button first."
-        )
-    
-    return await stream_pdf_from_url(
-        cloudinary_url=pdf_url,
-        filename=f"Invoice_{order_id}.pdf",
-        inline=inline
-    )
-
-
-async def _get_quotation_pdf(order_id: str, store_id: str, inline: bool):
-    """Fetch and stream quotation (received order) PDF"""
-    order = await sales_orders_collection.find_one(
-        {"order_id": order_id, "store_id": store_id},
-        {"_id": 0, "pdf_url": 1, "status": 1}
-    )
-    
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-    
-    pdf_url = order.get("pdf_url")
-    if not pdf_url:
-        raise HTTPException(
-            status_code=404,
-            detail="PDF not yet generated. Please download using the download button first."
-        )
-    
-    return await stream_pdf_from_url(
-        cloudinary_url=pdf_url,
-        filename=f"Quotation_{order_id}.pdf",
-        inline=inline
-    )
-
-
-@router.get("/files/status")
-async def check_cloudinary_status():
-    """
-    Check if Cloudinary storage is properly configured.
-    Useful for debugging deployment issues.
-    """
+    # Return URL for frontend to open directly
     return {
-        "cloudinary_enabled": is_cloudinary_configured(),
-        "message": "Cloudinary is " + ("enabled" if is_cloudinary_configured() else "disabled - PDFs will use local temp files")
+        "url": document_url,
+        "filename": f"{contract.get('vendor_name', 'contract')}_{contract.get('product_name', 'document')}.pdf"
     }
+
+
+# LEGACY ENDPOINTS - Commented out, no longer in use
+# These were used for PDF streaming but now we return URLs directly for client-side downloads
+
+# @router.get("/files/{file_type}/{identifier}")
+# async def get_file(file_type: str, identifier: str, request: Request, inline: bool = False):
+#     """Legacy streaming endpoint - replaced by direct URL downloads"""
+#     pass

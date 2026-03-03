@@ -118,6 +118,7 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
         return {
             "message": f"Contract updated successfully. Quantity increased from {existing_quantity} to {new_quantity}.",
             "contract_id": duplicate_contract.get("contract_id"),
+            "request_id": duplicate_contract.get("request_id"),
             "previous_quantity": existing_quantity,
             "new_quantity": new_quantity,
             "was_updated": True
@@ -168,12 +169,19 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
             # Format as DD-MM-YYYY (Indian format)
             contract_dict["valid_upto"] = valid_date.strftime("%d-%m-%Y")
 
+        # Debug: Log if document URL is present
+        if contract_dict.get("uploaded_document_url"):
+            print(f" Contract has document URL: {contract_dict['uploaded_document_url'][:50]}...")
+        else:
+            print(f" No document URL in contract {contract_dict.get('contract_id')}")
+
         await contracts_collection.insert_one(contract_dict)
 
         return {
             "message": "Contract successfully created",
             "vendor_id": vendor_id,
             "contract_id": contract_dict["contract_id"],
+            "request_id": contract_dict["request_id"],
         }
 
     except HTTPException:

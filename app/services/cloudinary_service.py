@@ -1,7 +1,22 @@
 """
 Cloudinary Service
-Handles PDF upload, storage, and streaming from Cloudinary.
-Non-breaking integration - maintains existing API behavior.
+Handles PDF upload to Cloudinary cloud storage.
+
+CURRENTLY ACTIVE FUNCTIONS:
+- configure_cloudinary() - Initialize Cloudinary
+- upload_pdf_from_path() - Upload PDF files (used for contract documents)
+- is_cloudinary_configured() - Check if service is enabled
+
+LEGACY/UNUSED FUNCTIONS (kept for reference):
+- upload_pdf_from_memory() - Not currently used
+- stream_pdf_from_url() - Replaced by direct URL downloads
+- generate_signed_url() - Not needed (PDF delivery enabled in Cloudinary)
+- extract_public_id_from_url() - Was for signed URLs
+- get_pdf_bytes_from_url() - Not currently used
+- delete_pdf_from_cloudinary() - Not currently used
+- generate_and_upload_pdf() - Not currently used
+- invalidate_pdf_cache() - Not currently used
+- clear_pdf_url_sync() - Not currently used
 """
 
 import cloudinary
@@ -121,31 +136,41 @@ def upload_pdf_from_path(
         dict with upload result or None if failed
     """
     if not CLOUDINARY_ENABLED:
-        print("⚠️  Cloudinary not enabled, skipping upload")
+        print("  Cloudinary not enabled, skipping upload")
         return None
     
     try:
         filename = os.path.basename(file_path)
         
         upload_options = {
-            "resource_type": "raw",
+            "resource_type": "raw",  # MUST be raw for PDFs
             "folder": folder,
-            "format": "pdf",
-            "type": "upload",
-            "access_mode": "public"  # Ensure raw files are publicly accessible
+            "type": "upload"
         }
         
         if public_id:
             upload_options["public_id"] = public_id
             upload_options["overwrite"] = True
-            upload_options["invalidate"] = True  # Force CDN cache refresh
+            upload_options["invalidate"] = True
         else:
             base_name = os.path.splitext(filename)[0]
             upload_options["public_id"] = base_name
         
+        print(f"🔧 Uploading with options: {upload_options}")
         result = cloudinary.uploader.upload(file_path, **upload_options)
         
-        print(f"✅ PDF uploaded to Cloudinary: {result.get('secure_url', 'URL not available')}")
+        url = result.get('secure_url', '')
+        resource_type = result.get('resource_type', 'unknown')
+        print(f" Uploaded as {resource_type}: {url}")
+        
+        # If Cloudinary returned image type, convert URL to raw
+        if '/image/' in url and resource_type == 'image':
+            print(f" Cloudinary uploaded as image, converting URL to raw...")
+            # Replace image with raw in URL
+            raw_url = url.replace('/image/', '/raw/')
+            result['secure_url'] = raw_url
+            print(f" Converted to raw URL: {raw_url}")
+        
         return result
     
     except Exception as e:
@@ -175,25 +200,33 @@ def extract_public_id_from_url(cloudinary_url: str) -> Optional[str]:
     return None
 
 
-def generate_signed_url(public_id: str) -> str:
+def generate_signed_url(public_id: str, expires_in: int = 3600) -> str:
     """
-    Generate a signed URL for a raw resource that expires in 1 hour.
+    Generate a signed URL for a raw resource.
+    
+    Args:
+        public_id: The Cloudinary public_id (e.g., "contract_documents/contract_doc_xyz")
+        expires_in: Expiration time in seconds (default 1 hour)
+        
+    Returns:
+        Signed URL string
     """
-    import time
     try:
-        signed_url = cloudinary.utils.cloudinary_url(
-            public_id,
+        # For raw files, we need to specify the format explicitly
+        # Generate signed URL for raw files with PDF format
+        url, _ = cloudinary.utils.cloudinary_url(
+            public_id + ".pdf",  # Add extension back 
             resource_type="raw",
-            type="authenticated",
+            type="upload",
             sign_url=True,
-            format="pdf"
+            secure=True
         )
-        # cloudinary_url returns a tuple (url, options)
-        if isinstance(signed_url, tuple):
-            return signed_url[0]
-        return signed_url
+        print(f"   Generated signed URL: {url}")
+        return url
     except Exception as e:
-        print(f"⚠️ Failed to generate signed URL: {e}")
+        print(f" Failed to generate signed URL: {e}")
+        import traceback
+        print(traceback.format_exc())
         return None
 
 
@@ -232,7 +265,7 @@ async def stream_pdf_from_url(
             
             if head_response.status_code == 401:
                 # Try signed URL for authenticated resources
-                print(f"⚠️ URL requires authentication (401), trying signed URL...")
+                print(f" URL requires authentication (401), trying signed URL...")
                 public_id = extract_public_id_from_url(cloudinary_url)
                 if public_id:
                     signed = generate_signed_url(public_id)
@@ -240,10 +273,10 @@ async def stream_pdf_from_url(
                         # Verify signed URL works
                         signed_response = await client.head(signed, follow_redirects=True)
                         if signed_response.status_code == 200:
-                            print(f"✅ Signed URL works for {public_id}")
+                            print(f" Signed URL works for {public_id}")
                             stream_url = signed
                         else:
-                            print(f"⚠️ Signed URL also failed: {signed_response.status_code}")
+                            print(f" Signed URL also failed: {signed_response.status_code}")
                             raise HTTPException(
                                 status_code=404,
                                 detail="PDF not found in cloud storage. It may need to be regenerated."
@@ -259,13 +292,13 @@ async def stream_pdf_from_url(
                         detail="PDF not found in cloud storage. It may need to be regenerated."
                     )
             elif head_response.status_code != 200:
-                print(f"⚠️ Cloudinary URL validation failed: {head_response.status_code} for {cloudinary_url}")
+                print(f" Cloudinary URL validation failed: {head_response.status_code} for {cloudinary_url}")
                 raise HTTPException(
                     status_code=404,
                     detail="PDF not found in cloud storage. It may need to be regenerated."
                 )
         except httpx.RequestError as e:
-            print(f"⚠️ Cloudinary URL request error: {str(e)}")
+            print(f" Cloudinary URL request error: {str(e)}")
             raise HTTPException(
                 status_code=503,
                 detail="Unable to connect to cloud storage. Please try again."
@@ -343,7 +376,7 @@ def delete_pdf_from_cloudinary(public_id: str, folder: str = None) -> bool:
         return result.get("result") == "ok"
     
     except Exception as e:
-        print(f"❌ Cloudinary delete failed: {str(e)}")
+        print(f" Cloudinary delete failed: {str(e)}")
         return False
 
 
@@ -478,7 +511,7 @@ async def invalidate_pdf_cache(
         return False
     
     except Exception as e:
-        print(f"⚠️ Failed to invalidate PDF cache: {str(e)}")
+        print(f" Failed to invalidate PDF cache: {str(e)}")
         return False
 
 
@@ -493,6 +526,6 @@ def clear_pdf_url_sync(collection, filter_query: dict, pdf_url_field: str = "pdf
     try:
         from pymongo import MongoClient
         # This is a placeholder - in async code use invalidate_pdf_cache instead
-        print(f"⚠️ Sync PDF URL clear requested for {filter_query}")
+        print(f" Sync PDF URL clear requested for {filter_query}")
     except Exception as e:
-        print(f"⚠️ Failed to clear PDF URL: {str(e)}")
+        print(f" Failed to clear PDF URL: {str(e)}")

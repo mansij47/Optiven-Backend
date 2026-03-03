@@ -87,6 +87,7 @@ class Contract(BaseModel):
     returnable: Optional[bool] = None
     return_conditions: Optional[List[str]] = None
     is_damage_returnable: Optional[bool] = None
+    uploaded_document_url: Optional[str] = None  # Cloudinary URL for uploaded contract document
     type: Optional[str] = "order"  # "order" or "preorder"
     status: Optional[str] = "pending"  # ✅ Made optional with default
     created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
@@ -120,6 +121,7 @@ class ContractUpdate(BaseModel):
     returnable: Optional[bool]= None
     return_conditions: Optional[List[str]]= None
     is_damage_returnable: Optional[bool] = None
+    uploaded_document_url: Optional[str] = None  # Cloudinary URL for uploaded contract document
 
     status: Optional[str]= None
     created_at: datetime = Field(default_factory=datetime.utcnow)
