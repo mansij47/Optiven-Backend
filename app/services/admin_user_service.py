@@ -13,7 +13,7 @@ from app.utils.email_utils import send_welcome_email
 async def create_department_user(data, user_info):
     try:
         # Validate role
-        if data.role not in ["sales", "procurement"]:
+        if data.role not in ["sales", "procurement", "admin"]:
             raise HTTPException(status_code=400, detail="Invalid role/department")
 
         # Extract org and store IDs from token/user info
@@ -34,8 +34,25 @@ async def create_department_user(data, user_info):
         # Current timestamp
         today = datetime.utcnow()
 
-        # Generate a unique UUID for this employee
-        new_id = str(uuid.uuid4())
+        # Generate sequential employee ID (EMP001, EMP002, etc.)
+        # Find the highest employee number in the store
+        last_employee = await db.Users.find_one(
+            {"org_id": org_id, "store_id": store_id, "id": {"$regex": "^EMP"}},
+            sort=[("id", -1)]
+        )
+        
+        if last_employee and last_employee.get("id"):
+            # Extract number from last employee ID (e.g., EMP005 -> 5)
+            try:
+                last_num = int(last_employee["id"].replace("EMP", ""))
+                new_num = last_num + 1
+            except ValueError:
+                new_num = 1
+        else:
+            new_num = 1
+        
+        # Format as EMP001, EMP002, etc.
+        new_id = f"EMP{new_num:03d}"
 
         # Prepare user document using your Pydantic model
         user_doc = UserModel(
@@ -118,6 +135,21 @@ async def get_all_employees(user_info):
         if "_id" in emp and isinstance(emp["_id"], ObjectId):
             emp["_id"] = str(emp["_id"])
 
+        # Format name field for frontend
+        if "name" in emp:
+            if isinstance(emp["name"], dict):
+                first_name = emp["name"].get("first_name", "")
+                last_name = emp["name"].get("last_name", "")
+                emp["name"] = f"{first_name} {last_name}".strip()
+            elif not isinstance(emp["name"], str):
+                emp["name"] = "Unknown"
+        else:
+            emp["name"] = "Unknown"
+
+        # Add department field for frontend compatibility (map from role)
+        if "role" in emp:
+            emp["department"] = emp["role"]
+
         employees.append(emp)
 
     return employees
@@ -139,6 +171,21 @@ async def get_employee_by_id(emp_id: str, user_info):
     if "_id" in employee and isinstance(employee["_id"], ObjectId):
         employee["_id"] = str(employee["_id"])
 
+    # Format name field for frontend
+    if "name" in employee:
+        if isinstance(employee["name"], dict):
+            first_name = employee["name"].get("first_name", "")
+            last_name = employee["name"].get("last_name", "")
+            employee["name"] = f"{first_name} {last_name}".strip()
+        elif not isinstance(employee["name"], str):
+            employee["name"] = "Unknown"
+    else:
+        employee["name"] = "Unknown"
+
+    # Add department field for frontend compatibility (map from role)
+    if "role" in employee:
+        employee["department"] = employee["role"]
+
     return employee
 
 
@@ -151,9 +198,14 @@ async def update_employee_by_id(emp_id: str, data, user_info):
 
     update_data = {}
 
-    if getattr(data, "first_name", None) or getattr(data, "last_name", None):
-        update_data["name.first_name"] = getattr(data, "first_name", None)
-        update_data["name.last_name"] = getattr(data, "last_name", None)
+    # Update name fields together if both are provided
+    if getattr(data, "first_name", None) and getattr(data, "last_name", None):
+        update_data["name.first_name"] = data.first_name
+        update_data["name.last_name"] = data.last_name
+    elif getattr(data, "first_name", None):
+        update_data["name.first_name"] = data.first_name
+    elif getattr(data, "last_name", None):
+        update_data["name.last_name"] = data.last_name
 
     if getattr(data, "email", None):
         existing = await db.Users.find_one({"email": data.email, "id": {"$ne": emp_id}})
@@ -165,7 +217,7 @@ async def update_employee_by_id(emp_id: str, data, user_info):
         update_data["phone"] = data.phone
 
     if getattr(data, "role", None):
-        if data.role not in ["sales", "procurement"]:
+        if data.role not in ["sales", "procurement", "admin"]:
             raise HTTPException(status_code=400, detail="Invalid role")
         update_data["role"] = data.role
 

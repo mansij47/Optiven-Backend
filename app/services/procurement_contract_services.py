@@ -30,6 +30,20 @@ VENDOR_COLLECTION = db["Vendors"]
 stores_collection = db["Stores"]
 
 
+def round_contract_prices(contract: dict) -> dict:
+    """
+    Round all price-related fields in a contract to 2 decimal places
+    """
+    price_fields = ['base_price', 'unit_price', 'vendor_tax']
+    for field in price_fields:
+        if field in contract and contract[field] is not None:
+            try:
+                contract[field] = round(float(contract[field]), 2)
+            except (ValueError, TypeError):
+                pass
+    return contract
+
+
 async def generate_contract_id(store_id: str) -> str:
     """
     Generate contract ID in format: CONT-{YEAR}-{6-digit-sequence}
@@ -306,6 +320,9 @@ async def get_contracts_by_request_id(request_id: str, store_id: str):
             "message": "No contracts found for this request."
         }
 
+    # Round price fields to 2 decimal places
+    contracts = [round_contract_prices(contract) for contract in contracts]
+
     return {"contracts": contracts}
 
 
@@ -318,6 +335,9 @@ async def get_contract_by_id(contract_id: str, store_id: str):
 
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found.")
+
+    # Round price fields to 2 decimal places
+    contract = round_contract_prices(contract)
 
     return {"contract": contract}
 

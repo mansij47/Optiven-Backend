@@ -3,8 +3,25 @@ from typing import List
 from fastapi import  HTTPException
 from app.models.procurement_models import ReturnOrderSummary
 from app.models.procurement_models import ReturnOrderDetail, ProductDetails
+from datetime import datetime
 
 return_orders_collection = db["ReturnOrders"]
+
+# Helper function to format return_date to YYYY-MM-DD
+def format_return_date_string(date_value) -> str:
+    """Format return_date to YYYY-MM-DD format, removing time component"""
+    if not date_value:
+        return date_value
+    try:
+        # Handle both string and datetime objects
+        if isinstance(date_value, datetime):
+            return date_value.strftime('%Y-%m-%d')
+        elif isinstance(date_value, str):
+            # If it's already a string, extract just the date part (YYYY-MM-DD)
+            return date_value.split('T')[0]
+    except Exception:
+        pass  # Keep original value if formatting fails
+    return date_value
 
 
 #List of Return Order from Sales
@@ -73,6 +90,9 @@ async def get_return_order_detail(return_id: str, store_id: str) -> ReturnOrderD
         
         parsed_products.append(product_detail)
 
+    # Format return_date to YYYY-MM-DD
+    formatted_return_date = format_return_date_string(order.get("return_date"))
+
     return ReturnOrderDetail(
         return_id=order.get("return_id"),
         order_id=order.get("order_id"),
@@ -81,7 +101,7 @@ async def get_return_order_detail(return_id: str, store_id: str) -> ReturnOrderD
         phone_no=order.get("phone_no"),
         email=order.get("email"),
         product=parsed_products,
-        return_date=order.get("return_date"),
+        return_date=formatted_return_date,
         is_customer_returnable=order.get("is_customer_returnable"),
         remarks=order.get("remarks"),
         reason=order.get("reason"),

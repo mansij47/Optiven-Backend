@@ -221,7 +221,8 @@ async def create_store(data: CreateStoreModel, send_email):
         phone=doc.get("address", {}).get("phone"),
         email=doc.get("store_email"),
         name=doc.get("admin_name"),
-        joining_date=now
+        joining_date=now,
+        status=1
     )
 
     # Check if user already exists

@@ -565,14 +565,18 @@ async def fetch_employee_by_id(emp_id: str, request: Request):
     user_info = request.state.user
     return await get_employee_by_id(emp_id, user_info)
 
-@router.patch("/employees/{emp_id}")
+@router.put("/employees/{emp_id}")
 async def update_employee(emp_id: str, data: DepartmentUserUpdate, request: Request):
     user = request.state.user
 
-    # Step 1: Update the employee
+    # Step 1: Get employee name for notification
+    employee = await get_employee_by_id(emp_id, user)
+    employee_name = employee.get("name", "Employee")
+
+    # Step 2: Update the employee
     update_response = await update_employee_by_id(emp_id, data, user)
 
-    # Step 2: Prepare sender info for notification
+    # Step 3: Prepare sender info for notification
     sender_info = {
         "id": user.get("id") or "unknown",
         "store_id": user.get("store_id"),
@@ -580,15 +584,15 @@ async def update_employee(emp_id: str, data: DepartmentUserUpdate, request: Requ
         "email": user.get("email")
     }
 
-    # Step 3: Create Notification object
+    # Step 4: Create Notification object
     notification = NotificationBase(
         sender=UserInfo(**sender_info),
         type_of_notification="Employee Management",
         title="Employee Updated",
-        message=f"{data.first_name}'s details have been updated."
+        message=f"{employee_name}'s details have been updated."
     )
 
-    # Step 4: Send Notification
+    # Step 5: Send Notification
     await create_notification(
         notification=notification,
         admin=True  # Notify admins

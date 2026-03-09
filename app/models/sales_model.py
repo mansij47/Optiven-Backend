@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, validator
 from typing import List, Optional
 from datetime import datetime
 
@@ -139,7 +139,7 @@ class ReturnOrder(BaseModel):
     phone_no: int
     email: str
     product: List[Product]
-    return_date: datetime
+    return_date: str
     is_customer_returnable: bool
     remarks: str
     reason: str
@@ -147,6 +147,17 @@ class ReturnOrder(BaseModel):
     store_id: Optional[str] = None  # Include this for injection
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @validator('return_date', pre=True)
+    def format_return_date(cls, v):
+        """Ensure return_date is always in YYYY-MM-DD format"""
+        if not v:
+            return v
+        if isinstance(v, datetime):
+            return v.strftime('%Y-%m-%d')
+        if isinstance(v, str):
+            return v.split('T')[0]
+        return v
 
 class SendToProcurement(BaseModel):
     return_id: str
@@ -158,7 +169,7 @@ class SendToProcurement(BaseModel):
     customer_name: str
     email: str
     phone_no: int
-    return_date: datetime
+    return_date: str
     return_reason: str
     quantity:str
     unit_price:int
@@ -166,6 +177,17 @@ class SendToProcurement(BaseModel):
     return_amount:str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @validator('return_date', pre=True)
+    def format_return_date(cls, v):
+        """Ensure return_date is always in YYYY-MM-DD format"""
+        if not v:
+            return v
+        if isinstance(v, datetime):
+            return v.strftime('%Y-%m-%d')
+        if isinstance(v, str):
+            return v.split('T')[0]
+        return v
 
 class ReturnOrderRequest(BaseModel):
     order_id: str
@@ -196,7 +218,7 @@ class ReturnedOrderModel(BaseModel):
     phone_no: str
     email: str
     product: List[ReturnedProductModel]
-    return_date: datetime
+    return_date: str
     reason: str
     is_customer_returnable: Optional[bool] = None
     remarks: Optional[str] = None
@@ -206,6 +228,17 @@ class ReturnedOrderModel(BaseModel):
     destination: Optional[str] = None  # ✅ Track where the return went (Inventory, LossOrders, ReturnToVendor)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @validator('return_date', pre=True)
+    def format_return_date(cls, v):
+        """Ensure return_date is always in YYYY-MM-DD format"""
+        if not v:
+            return v
+        if isinstance(v, datetime):
+            return v.strftime('%Y-%m-%d')
+        if isinstance(v, str):
+            return v.split('T')[0]
+        return v
 class ProductDetails(BaseModel):
     product_id: str
     product_name: Optional[str]
