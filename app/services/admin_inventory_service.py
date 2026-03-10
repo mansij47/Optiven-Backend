@@ -157,7 +157,7 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
             if current_status != "Stock-out":
                 await db.Inventory.update_one(
                     {"product_id": product_id, "store_id": store_id},
-                    {"$set": {"status": "Stock-out", "updated_at": datetime.utcnow()}}
+                    {"$set": {"status": "Stock-out", "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
                 )
                 print(f"✅ Status updated to 'Stock-out' for {product_id}")
         elif quantity < min_stock:
@@ -169,7 +169,7 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
                 # Update product status to "Low Stock"
                 await db.Inventory.update_one(
                     {"product_id": product_id, "store_id": store_id},
-                    {"$set": {"status": "Low Stock", "updated_at": datetime.utcnow()}}
+                    {"$set": {"status": "Low Stock", "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
                 )
                 
                 # Send notification to admin and procurement
@@ -202,7 +202,7 @@ async def check_and_notify_low_stock(product_id: str, store_id: str):
             if current_status == "Low Stock":
                 await db.Inventory.update_one(
                     {"product_id": product_id, "store_id": store_id},
-                    {"$set": {"status": "Stock-in", "updated_at": datetime.utcnow()}}
+                    {"$set": {"status": "Stock-in", "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
                 )
                 print(f" Product {product_id} restocked. Status reset to Stock-in.")
     
@@ -248,7 +248,7 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
                         "average_price": average_price,
                         "vendor_tax": average_vendor_tax,
                         "average_selling_price": average_selling_price,
-                        "updated_at": datetime.utcnow()
+                        "updated_at": datetime.utcnow().strftime("%Y-%m-%d")
                     }
                 }
             )
@@ -270,8 +270,8 @@ async def add_product_service(product: Product, store_id: str, org_id: str):
         product_dict["product_id"] = new_product_id
         product_dict["store_id"] = store_id
         product_dict["org_id"] = org_id
-        product_dict["created_at"] = datetime.utcnow()
-        product_dict["updated_at"] = datetime.utcnow()
+        product_dict["created_at"] = datetime.utcnow().strftime("%Y-%m-%d")
+        product_dict["updated_at"] = datetime.utcnow().strftime("%Y-%m-%d")
         # 0 = Stock-out, >0 and <min_stock = Low Stock, >=min_stock = Stock-in
         min_stock_val = product_dict.get("min_stock", 4)
         if quantity == 0:
@@ -357,8 +357,8 @@ async def create_product_items(product_id: str, quantity: int, product_data: dic
                 "has_warranty": False,
                 "warranty_tenure": 0,
                 "warranty_unit": "",
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
+                "created_at": datetime.utcnow().strftime("%Y-%m-%d"),
+                "updated_at": datetime.utcnow().strftime("%Y-%m-%d"),
                 "status": "available"  # available, sold, returned, damaged, etc.
             }
             
@@ -400,9 +400,10 @@ async def get_all_products(store_id: str):
         # ✅ Sort stock-out & low stock first
         products.sort(
             key=lambda p: (
-                1 if p["status"] in ["Stock-out", "Low Stock"] else 2,
-                -(p.get("created_at").timestamp())
-            )
+                2 if p["status"] in ["Stock-out", "Low Stock"] else 1,
+                p.get("created_at", "9999-99-99")  # String date comparison
+            ),
+            reverse=True  # Stock-out/Low Stock at top (2 > 1), then most recent first
         )
 
         return {
@@ -514,10 +515,10 @@ async def update_product_by_id(product_id: str, update_data: dict, store_id: str
                 for item in available_items:
                     await db.ProductItems.update_one(
                         {"item_id": item["item_id"]},
-                        {"$set": {"status": "removed", "updated_at": datetime.utcnow()}}
+                        {"$set": {"status": "removed", "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
                     )
 
-        update_data["updated_at"] = datetime.utcnow()
+        update_data["updated_at"] = datetime.utcnow().strftime("%Y-%m-%d")
         await db["Inventory"].update_one(query, {"$set": update_data})
 
         updated = await db["Inventory"].find_one(query)
@@ -714,7 +715,7 @@ async def update_item_by_id(item_id: str, update_data: ProductItemUpdateModel, s
         
         # Convert model to dict and remove None values
         update_dict = {k: v for k, v in update_data.model_dump().items() if v is not None}
-        update_dict["updated_at"] = datetime.utcnow()
+        update_dict["updated_at"] = datetime.utcnow().strftime("%Y-%m-%d")
         
         # Check if unit_price or vendor_tax is being updated
         unit_price_updated = "unit_price" in update_dict
@@ -734,7 +735,7 @@ async def update_item_by_id(item_id: str, update_data: ProductItemUpdateModel, s
                     {"$set": {
                         "average_price": average_price,
                         "vendor_tax": average_vendor_tax,
-                        "updated_at": datetime.utcnow()
+                        "updated_at": datetime.utcnow().strftime("%Y-%m-%d")
                     }}
                 )
         
@@ -780,7 +781,7 @@ async def delete_item_by_id(item_id: str, store_id: str = None):
             {
                 "$set": {
                     "quantity": remaining_items,
-                    "updated_at": datetime.utcnow()
+                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d")
                 }
             }
         )
@@ -825,8 +826,8 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None, s
             "event_type": "sale",
             "order_id": order_id,
             "selling_price": selling_price if selling_price is not None else item.get("selling_price", 0),
-            "sold_at": datetime.utcnow(),
-            "timestamp": datetime.utcnow()
+            "sold_at": datetime.utcnow().strftime("%Y-%m-%d"),
+            "timestamp": datetime.utcnow().strftime("%Y-%m-%d")
         }
         
         # Mark item as sold and append to history
@@ -836,8 +837,8 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None, s
                 "$set": {
                     "status": "sold",
                     "sold_order_id": order_id,
-                    "sold_at": datetime.utcnow(),
-                    "updated_at": datetime.utcnow()
+                    "sold_at": datetime.utcnow().strftime("%Y-%m-%d"),
+                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d")
                 },
                 "$push": {
                     "history": sale_history_entry
@@ -873,7 +874,7 @@ async def mark_item_as_sold(item_id: str, store_id: str, order_id: str = None, s
             {
                 "$set": {
                     "quantity": remaining_available,
-                    "updated_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d"),
                     "status": new_status
                 }
             }
@@ -936,8 +937,8 @@ async def mark_items_as_sold_bulk(product_id: str, quantity: int, store_id: str,
                         "status": "sold",
                         "selling_price": selling_price,  # Use custom or product's selling_price
                         "sold_order_id": order_id,
-                        "sold_at": datetime.utcnow(),
-                        "updated_at": datetime.utcnow()
+                        "sold_at": datetime.utcnow().strftime("%Y-%m-%d"),
+                        "updated_at": datetime.utcnow().strftime("%Y-%m-%d")
                     }
                 }
             )
@@ -970,7 +971,7 @@ async def mark_items_as_sold_bulk(product_id: str, quantity: int, store_id: str,
             {
                 "$set": {
                     "quantity": remaining_available,
-                    "updated_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d"),
                     "status": new_status
                 }
             }
@@ -1054,15 +1055,15 @@ async def handle_customer_return(
                 "return_reason": return_reason,
                 "new_status": new_status,
                 "destination": destination,
-                "returned_at": datetime.utcnow(),
-                "timestamp": datetime.utcnow()
+                "returned_at": datetime.utcnow().strftime("%Y-%m-%d"),
+                "timestamp": datetime.utcnow().strftime("%Y-%m-%d")
             }
             
             update_fields = {
                 "status": new_status,
-                "returned_at": datetime.utcnow(),
+                "returned_at": datetime.utcnow().strftime("%Y-%m-%d"),
                 "return_reason": return_reason,
-                "updated_at": datetime.utcnow()
+                "updated_at": datetime.utcnow().strftime("%Y-%m-%d")
             }
             
             # ✅ KEEP SALES HISTORY - Don't clear sold_order_id and sold_at
@@ -1110,7 +1111,7 @@ async def handle_customer_return(
             {
                 "$set": {
                     "quantity": available_count,
-                    "updated_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d"),
                     "status": new_status
                 }
             }
@@ -1315,8 +1316,8 @@ async def add_product_direct_service(product_data: dict, store_id: str, org_id: 
                     "is_consumer_returnable": item_data.get("is_consumer_returnable", False),
                     "consumer_return_conditions": item_data.get("consumer_return_conditions", []),
                     
-                    "created_at": datetime.utcnow(),
-                    "updated_at": datetime.utcnow()
+                    "created_at": datetime.utcnow().strftime("%Y-%m-%d"),
+                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d")
                 }
                 
                 await db.ProductItems.insert_one(item_dict)
@@ -1345,7 +1346,7 @@ async def add_product_direct_service(product_data: dict, store_id: str, org_id: 
                         "average_selling_price": average_selling_price,
                         "vendor_tax": average_vendor_tax,
                         "status": status,
-                        "updated_at": datetime.utcnow()
+                        "updated_at": datetime.utcnow().strftime("%Y-%m-%d")
                     }
                 }
             )
@@ -1389,8 +1390,8 @@ async def add_product_direct_service(product_data: dict, store_id: str, org_id: 
                 "type": "order",  # Directly available, not preorder
                 "average_price": 0.0,
                 "average_selling_price": 0.0,
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow()
+                "created_at": datetime.utcnow().strftime("%Y-%m-%d"),
+                "updated_at": datetime.utcnow().strftime("%Y-%m-%d")
             }
             
             await db.Inventory.insert_one(product_record)
@@ -1438,8 +1439,8 @@ async def add_product_direct_service(product_data: dict, store_id: str, org_id: 
                     "is_consumer_returnable": item_data.get("is_consumer_returnable", False),
                     "consumer_return_conditions": item_data.get("consumer_return_conditions", []),
                     
-                    "created_at": datetime.utcnow(),
-                    "updated_at": datetime.utcnow()
+                    "created_at": datetime.utcnow().strftime("%Y-%m-%d"),
+                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d")
                 }
                 
                 await db.ProductItems.insert_one(item_dict)

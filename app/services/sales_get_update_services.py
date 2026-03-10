@@ -18,6 +18,21 @@ from bson.son import SON
 from datetime import datetime,timezone
 from app.utils.inventory_sync import sync_inventory_on_change
 
+# Helper function to format return_date to YYYY-MM-DD
+def format_return_date(return_order: dict) -> dict:
+    """Format return_date to YYYY-MM-DD format, removing time component"""
+    if 'return_date' in return_order and return_order['return_date']:
+        try:
+            # Handle both string and datetime objects
+            if isinstance(return_order['return_date'], datetime):
+                return_order['return_date'] = return_order['return_date'].strftime('%Y-%m-%d')
+            elif isinstance(return_order['return_date'], str):
+                # If it's already a string, extract just the date part (YYYY-MM-DD)
+                return_order['return_date'] = return_order['return_date'].split('T')[0]
+        except Exception:
+            pass  # Keep original value if formatting fails
+    return return_order
+
 sales_orders_collection = db["SalesOrders"]
 requested_orders_collection = db["RequestedOrders"]
 stores_collection = db["Stores"]
@@ -126,6 +141,9 @@ async def get_all_sales_orders(store_id: str):
 
         # ✅ Parse order status (existing logic preserved)
         order["status"] = parse_status_string(order.get("status", "0"))
+
+        # ✅ Ensure has_pending_request field exists (default to False for old orders)
+        order["has_pending_request"] = order.get("has_pending_request", False)
 
         # Cleanup (existing behavior)
         order.pop("order_status", None)
@@ -691,7 +709,8 @@ async def get_all_returns(store_id: str):
     result = []
 
     async for item in cursor:
-        # Instead of building a custom dictionary, append full item
+        # Format return_date before appending
+        item = format_return_date(item)
         result.append(item)
 
     return result
@@ -705,6 +724,8 @@ async def get_return_by_id(return_id: str, store_id: str):
     if not order:
         raise HTTPException(status_code=404, detail="Return order not found in this store")
 
+    # Format return_date before returning
+    order = format_return_date(order)
     return order
 
 async def delete_return(return_id: str, store_id: str):
@@ -749,14 +770,22 @@ async def get_all_procurement_returns(store_id: str, status_filter: str = "all")
     cursor = db.ReturnOrders.find(query, {"_id": 0}).sort([("_id", -1)])
     result = []
     async for r in cursor:
-        result.append(r)  # Append the entire document as it is
+        # Format return_date before appending
+        r = format_return_date(r)
+        result.append(r)
     return result
 
 async def get_procurement_return_by_id(return_id: str , store_id: str):
-    return await db.ReturnOrders.find_one(
-    {"return_id": return_id, "store_id": store_id},
-    {"_id": 0}
-)
+    order = await db.ReturnOrders.find_one(
+        {"return_id": return_id, "store_id": store_id},
+        {"_id": 0}
+    )
+    
+    if order:
+        # Format return_date before returning
+        order = format_return_date(order)
+    
+    return order
 
 
 async def get_product_details_service(store_id: str, product_id: Optional[str] = None, product_name: Optional[str] = None) -> ProductDetails:
@@ -942,6 +971,9 @@ async def get_sales_order_by_id(order_id: str, store_id: str):
     
     # ✅ Include currency field
     order["currency"] = order.get("currency", "INR")
+    
+    # ✅ Ensure has_pending_request field exists (default to False for old orders)
+    order["has_pending_request"] = order.get("has_pending_request", False)
     
     order["status"] = parse_status_string(order.get("status", "0"))
 

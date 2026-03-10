@@ -168,6 +168,17 @@ async def remove_store(store_id: str):
         raise HTTPException(404, "Store not found")
     return {"message": "Store deleted"}
 
+@router.delete("/store/{store_id}/permanent")
+async def permanent_remove_store(store_id: str, request: Request):
+    user = request.state.user
+    if user.get("role") != "super_admin":
+        raise HTTPException(403, "Access denied")
+    
+    deleted = await svc.permanent_delete_store(store_id)
+    if deleted == 0:
+        raise HTTPException(404, "Store not found")
+    return {"message": "Store permanently deleted"}
+
 @router.delete("/stores/delete-multiple")
 async def delete_multiple_stores(store_ids_model: StoreIdsModel, request: Request):
     user = request.state.user
@@ -179,7 +190,7 @@ async def delete_multiple_stores(store_ids_model: StoreIdsModel, request: Reques
         raise HTTPException(404, "No stores deleted. Check the store IDs.")
     return {"message": f"{deleted_count} store(s) deleted successfully."}
 
-@router.patch("/store/{store_id}/status")
+@router.put("/store/{store_id}/status")
 async def update_status(store_id: str, status_update: UpdateStoreStatusModel):
     upd = await svc.update_store_status(store_id, status_update.status)
     if upd == 0:

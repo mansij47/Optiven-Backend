@@ -115,7 +115,7 @@ async def create_notification(
 
 #     return notifications
 
-async def get_all_notifications(user: dict, status: Optional[int] = None, show_deleted: bool = False):
+async def get_all_notifications(user: dict, status: Optional[int] = None, show_deleted: bool = False, sort: Optional[str] = None):
     """
     Get all notifications for a user with optional filters.
     
@@ -123,6 +123,7 @@ async def get_all_notifications(user: dict, status: Optional[int] = None, show_d
         user: User dict with id, email, store_id
         status: Optional status filter (0=unread, 1=read)
         show_deleted: If True, only show deleted notifications (Bin). If False, only show active.
+        sort: Sort string like '-date,-time' (minus for descending, no prefix for ascending)
     """
     # print(f"\n========== GET NOTIFICATIONS DEBUG ==========")
     # print(f" User ID: {user.get('id')}")
@@ -168,22 +169,41 @@ async def get_all_notifications(user: dict, status: Optional[int] = None, show_d
         print(f" Query mode: ACTIVE ")
     
 
-    # ✅ Sort by ObjectId descending (latest first)
-    notifications = await notifications_collection.find(query).sort(
-        [("_id", -1)]
-    ).to_list(length=None)
+    # Parse sort parameter if provided
+    sort_fields = []
+    if sort:
+        # Parse sort string like "-date,-time" or "date,time"
+        for field in sort.split(','):
+            field = field.strip()
+            if field.startswith('-'):
+                # Descending order
+                sort_fields.append((field[1:], -1))
+            else:
+                # Ascending order
+                sort_fields.append((field, 1))
+    
+    # Default sort by _id descending if no sort specified
+    if not sort_fields:
+        sort_fields = [("_id", -1)]
+    
+    # Query with sorting
+    notifications = await notifications_collection.find(query).sort(sort_fields).to_list(length=None)
     
     print(f" Found {len(notifications)} notifications")
 
     # Convert ObjectId and datetime to string
     for notif in notifications:
         notif["_id"] = str(notif["_id"])
-        # Convert created_at datetime to ISO string for JSON serialization
+        # Convert created_at datetime to ISO string for JSON serialization (if it's a datetime object)
         if "created_at" in notif and notif["created_at"]:
-            notif["created_at"] = notif["created_at"].isoformat()
-        # Convert deletedAt datetime to ISO string for JSON serialization
+            if isinstance(notif["created_at"], datetime):
+                notif["created_at"] = notif["created_at"].isoformat()
+            # If it's already a string, leave it as is
+        # Convert deletedAt datetime to ISO string for JSON serialization (if it's a datetime object)
         if "deletedAt" in notif and notif["deletedAt"]:
-            notif["deletedAt"] = notif["deletedAt"].isoformat()
+            if isinstance(notif["deletedAt"], datetime):
+                notif["deletedAt"] = notif["deletedAt"].isoformat()
+            # If it's already a string, leave it as is
     
  
     return notifications
@@ -282,7 +302,11 @@ async def update_notification_by_id(notification_id: str, update_data, user_id: 
         if updated_doc:
             updated_doc["_id"] = str(updated_doc["_id"])
             if "created_at" in updated_doc and updated_doc["created_at"]:
-                updated_doc["created_at"] = updated_doc["created_at"].isoformat()
+                if isinstance(updated_doc["created_at"], datetime):
+                    updated_doc["created_at"] = updated_doc["created_at"].isoformat()
+            if "deletedAt" in updated_doc and updated_doc["deletedAt"]:
+                if isinstance(updated_doc["deletedAt"], datetime):
+                    updated_doc["deletedAt"] = updated_doc["deletedAt"].isoformat()
         
         return updated_doc
             

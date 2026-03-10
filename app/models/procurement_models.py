@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import List,Optional,Literal
-from pydantic import BaseModel, EmailStr,Field
+from pydantic import BaseModel, EmailStr,Field, validator
 from datetime import datetime
 # from datetime import date
 
@@ -87,10 +87,17 @@ class Contract(BaseModel):
     returnable: Optional[bool] = None
     return_conditions: Optional[List[str]] = None
     is_damage_returnable: Optional[bool] = None
+    uploaded_document_url: Optional[str] = None  # Cloudinary URL for uploaded contract document
     type: Optional[str] = "order"  # "order" or "preorder"
     status: Optional[str] = "pending"  # ✅ Made optional with default
     created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
     updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    
+    @validator('base_price', 'unit_price', 'vendor_tax', pre=True)
+    def round_to_two_decimals(cls, v):
+        if v is not None:
+            return round(float(v), 2)
+        return v
     
 #Update Contracts
 class ContractUpdate(BaseModel):
@@ -120,10 +127,17 @@ class ContractUpdate(BaseModel):
     returnable: Optional[bool]= None
     return_conditions: Optional[List[str]]= None
     is_damage_returnable: Optional[bool] = None
+    uploaded_document_url: Optional[str] = None  # Cloudinary URL for uploaded contract document
 
     status: Optional[str]= None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @validator('base_price', 'unit_price', 'vendor_tax', pre=True)
+    def round_to_two_decimals(cls, v):
+        if v is not None:
+            return round(float(v), 2)
+        return v
 
 #Contract Status 
 class ContractStatusUpdate(BaseModel):
@@ -157,6 +171,12 @@ class ReturnToVendorModel(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
+    @validator('total_price', 'unit_price', pre=True)
+    def round_to_two_decimals(cls, v):
+        if v is not None:
+            return round(float(v), 2)
+        return v
+    
 class ReturnToVendorResponse(BaseModel):
     return_id: str
     order_id: str
@@ -180,6 +200,12 @@ class ReturnToVendorDetail(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+    @validator('total_price', pre=True)
+    def round_to_two_decimals(cls, v):
+        if v is not None:
+            return round(float(v), 2)
+        return v
+
 #Purchase Orders
 class PurchaseOrderResponse(BaseModel):
     order_id: str
@@ -202,6 +228,13 @@ class PurchaseOrderResponse(BaseModel):
     return_conditions: Optional[List[str]] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @validator('amount', 'base_price', 'unit_price', 'vendor_tax', pre=True)
+    def round_to_two_decimals(cls, v):
+        if v is not None:
+            return round(float(v), 2)
+        return v
+
 #Purchase Orders (Detail Response)
 class PurchaseOrderDetailResponse(BaseModel):
     order_id: str
@@ -237,6 +270,12 @@ class PurchaseOrderDetailResponse(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+    @validator('amount', 'base_price', 'unit_price', 'vendor_tax', pre=True)
+    def round_to_two_decimals(cls, v):
+        if v is not None:
+            return round(float(v), 2)
+        return v
+
 
 #Delivery Status
 class PurchaseOrderUpdateStatus(BaseModel):
@@ -257,6 +296,12 @@ class ReturnOrderSummary(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+    @validator('returned_amount', pre=True)
+    def round_to_two_decimals(cls, v):
+        if v is not None:
+            return round(float(v), 2)
+        return v
+
 
 class ProductDetails(BaseModel):
     product_id: str
@@ -266,6 +311,12 @@ class ProductDetails(BaseModel):
     tax: float
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @validator('unit_price', 'tax', pre=True)
+    def round_to_two_decimals(cls, v):
+        if v is not None:
+            return round(float(v), 2)
+        return v
 
 class ReturnOrderDetail(BaseModel):
     return_id: str
@@ -285,6 +336,24 @@ class ReturnOrderDetail(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+    @validator('return_date', pre=True)
+    def format_return_date(cls, v):
+        """Ensure return_date is always in YYYY-MM-DD format"""
+        if not v:
+            return v
+        if isinstance(v, datetime):
+            return v.strftime('%Y-%m-%d')
+        if isinstance(v, str):
+            # Remove time component if present (e.g., "2026-02-13T00:00:00" -> "2026-02-13")
+            return v.split('T')[0]
+        return v
+
+    @validator('returned_amount', pre=True)
+    def round_to_two_decimals(cls, v):
+        if v is not None:
+            return round(float(v), 2)
+        return v
+
 #Return Validation
 class ReturnValidationRequest(BaseModel):
     return_id: str
@@ -302,6 +371,12 @@ class LossOrder(BaseModel):
     reason: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @validator('unit_price', pre=True)
+    def round_to_two_decimals(cls, v):
+        if v is not None:
+            return round(float(v), 2)
+        return v
 
 #Inventory
 # class Product(BaseModel):
@@ -391,6 +466,12 @@ class PurchaseOrderValidationRequest(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+    @validator('unit_price', pre=True)
+    def round_to_two_decimals(cls, v):
+        if v is not None:
+            return round(float(v), 2)
+        return v
+
 class PurchaseOrderValidationInput(BaseModel):
     order_id: str
     expected_quantity: int
@@ -414,6 +495,16 @@ class ItemDetail(BaseModel):
     is_damaged: Optional[bool] = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @validator('unit_price', 'selling_price', pre=True)
+    def round_price_strings(cls, v):
+        if v is not None and v != "0":
+            try:
+                return str(round(float(v), 2))
+            except (ValueError, TypeError):
+                return v
+        return v
+
 class PurchaseOrderSubmitRequest(BaseModel):
     order_id: str
     expected_quantity: int

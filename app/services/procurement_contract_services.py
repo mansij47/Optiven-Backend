@@ -30,6 +30,20 @@ VENDOR_COLLECTION = db["Vendors"]
 stores_collection = db["Stores"]
 
 
+def round_contract_prices(contract: dict) -> dict:
+    """
+    Round all price-related fields in a contract to 2 decimal places
+    """
+    price_fields = ['base_price', 'unit_price', 'vendor_tax']
+    for field in price_fields:
+        if field in contract and contract[field] is not None:
+            try:
+                contract[field] = round(float(contract[field]), 2)
+            except (ValueError, TypeError):
+                pass
+    return contract
+
+
 async def generate_contract_id(store_id: str) -> str:
     """
     Generate contract ID in format: CONT-{YEAR}-{6-digit-sequence}
@@ -68,10 +82,12 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
         contract_data.contract_id = await generate_contract_id(store_id)
     
     # ✅ Auto-generate request_id if not provided (direct contract creation without requested order)
-    if not contract_data.request_id or contract_data.request_id.strip() == "":
+    auto_generated_request = False
+    if not contract_data.request_id or contract_data.request_id.strip() == "" or contract_data.request_id.lower() in ["all", "undefined", "null"]:
         from app.utils.sales_utils import generate_request_id
         contract_data.request_id = await generate_request_id()
-        print(f"✅ Auto-generated request_id: {contract_data.request_id} for direct contract creation")
+        auto_generated_request = True
+        print(f" Auto-generated request_id: {contract_data.request_id} for direct contract creation")
 
     existing = await contracts_collection.find_one(
         {"contract_id": contract_data.contract_id, "store_id": store_id},
@@ -79,49 +95,6 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
     )
     if existing:
         raise HTTPException(status_code=400, detail="Contract with this ID already exists.")
-
-    # ✅ Check for existing active contract with same vendor and product for this request
-    # Only check for duplicates if request_id is provided (not for direct PDF uploads)
-    duplicate_contract = None
-    if contract_data.request_id:
-        duplicate_contract = await contracts_collection.find_one({
-            "request_id": contract_data.request_id,
-            "vendor_name": contract_data.vendor_name,
-            "product_name": contract_data.product_name,
-            "store_id": store_id,
-            "status": {"$in": ["pending", "accept"]}  # Check for active contracts only
-        })
-    
-    # ✅ If contract exists, UPDATE quantity instead of creating duplicate
-    if duplicate_contract:
-        existing_quantity = duplicate_contract.get("quantity", 0)
-        new_quantity = existing_quantity + (contract_data.quantity or 0)
-        
-        # Update the existing contract with new quantity and latest details
-        await contracts_collection.update_one(
-            {"_id": duplicate_contract["_id"]},
-            {"$set": {
-                "quantity": new_quantity,
-                "base_price": contract_data.base_price,
-                "unit_price": contract_data.unit_price,
-                "vendor_tax": contract_data.vendor_tax,
-                "date_of_delivery": contract_data.date_of_delivery,
-                "warranty_tenure": contract_data.warranty_tenure,
-                "warranty_unit": contract_data.warranty_unit,
-                "returnable": contract_data.returnable,
-                "return_conditions": contract_data.return_conditions,
-                "is_damage_returnable": contract_data.is_damage_returnable,
-                "secondary_email": contract_data.secondary_email,
-            }}
-        )
-        
-        return {
-            "message": f"Contract updated successfully. Quantity increased from {existing_quantity} to {new_quantity}.",
-            "contract_id": duplicate_contract.get("contract_id"),
-            "previous_quantity": existing_quantity,
-            "new_quantity": new_quantity,
-            "was_updated": True
-        }
 
     try:
         vendor_id = None
@@ -168,12 +141,62 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
             # Format as DD-MM-YYYY (Indian format)
             contract_dict["valid_upto"] = valid_date.strftime("%d-%m-%Y")
 
+        # Debug: Log if document URL is present
+        if contract_dict.get("uploaded_document_url"):
+            print(f" Contract has document URL: {contract_dict['uploaded_document_url'][:50]}...")
+        else:
+            print(f" No document URL in contract {contract_dict.get('contract_id')}")
+
         await contracts_collection.insert_one(contract_dict)
+
+        # ✅ If request_id was auto-generated, create a RequestedOrders entry
+        if auto_generated_request:
+            user = request.state.user
+            requested_orders_collection = db["RequestedOrders"]
+            
+            # Format estimate_date to YYYY-MM-DD (remove time component)
+            estimate_date_str = contract_dict.get("date_of_delivery", "")
+            if estimate_date_str:
+                try:
+                    # Parse ISO string and format as YYYY-MM-DD
+                    if isinstance(estimate_date_str, str):
+                        date_obj = datetime.fromisoformat(estimate_date_str.replace("Z", "+00:00"))
+                        estimate_date_str = date_obj.strftime("%Y-%m-%d")
+                    elif isinstance(estimate_date_str, datetime):
+                        estimate_date_str = estimate_date_str.strftime("%Y-%m-%d")
+                except (ValueError, AttributeError):
+                    # If parsing fails, keep original or use empty string
+                    pass
+            
+            # Create a RequestedOrders entry so the contract appears in the requested orders list
+            requested_order_data = {
+                "request_id": contract_dict["request_id"],
+                "product_name": contract_dict.get("product_name", ""),
+                "quantity": contract_dict.get("quantity", 0),
+                "unit": contract_dict.get("unit", "pcs"),
+                "category": contract_dict.get("category", ""),
+                "store_id": store_id,
+                "org_id": contract_dict.get("org_id", "ORG001"),
+                "estimate_date": estimate_date_str,
+                "status": "pending",
+                "type": "order",
+                "requested_by": {
+                    "user_id": user.get("user_id", ""),
+                    "name": user.get("name", ""),
+                    "role": user.get("role", "procurement")
+                },
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }
+            
+            await requested_orders_collection.insert_one(requested_order_data)
+            print(f"✅ Created RequestedOrders entry for request_id: {contract_dict['request_id']}")
 
         return {
             "message": "Contract successfully created",
             "vendor_id": vendor_id,
             "contract_id": contract_dict["contract_id"],
+            "request_id": contract_dict["request_id"],
         }
 
     except HTTPException:
@@ -297,6 +320,9 @@ async def get_contracts_by_request_id(request_id: str, store_id: str):
             "message": "No contracts found for this request."
         }
 
+    # Round price fields to 2 decimal places
+    contracts = [round_contract_prices(contract) for contract in contracts]
+
     return {"contracts": contracts}
 
 
@@ -309,6 +335,9 @@ async def get_contract_by_id(contract_id: str, store_id: str):
 
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found.")
+
+    # Round price fields to 2 decimal places
+    contract = round_contract_prices(contract)
 
     return {"contract": contract}
 

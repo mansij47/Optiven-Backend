@@ -5,6 +5,7 @@ from app.models.admin_login_model import LoginModel
 # from app.services import admin_login_service as svc
 
 from typing import Optional,List
+from datetime import datetime
 from app import db
 import traceback
 from jose import jwt, JWTError
@@ -135,10 +136,15 @@ async def send_notification(
 
 
 @router.get("/notifications")
-async def get_notifications(request: Request, status: Optional[int] = None, show_deleted: bool = False):
+async def get_notifications(
+    request: Request, 
+    status: Optional[int] = None, 
+    show_deleted: bool = False,
+    sort: Optional[str] = Query(None, description="Sort fields like '-date,-time' for descending order")
+):
     user = request.state.user  # Token-decoded user info: id, role, etc.
     try:
-        return await get_all_notifications(user, status, show_deleted)
+        return await get_all_notifications(user, status, show_deleted, sort)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
@@ -565,14 +571,18 @@ async def fetch_employee_by_id(emp_id: str, request: Request):
     user_info = request.state.user
     return await get_employee_by_id(emp_id, user_info)
 
-@router.patch("/employees/{emp_id}")
+@router.put("/employees/{emp_id}")
 async def update_employee(emp_id: str, data: DepartmentUserUpdate, request: Request):
     user = request.state.user
 
-    # Step 1: Update the employee
+    # Step 1: Get employee name for notification
+    employee = await get_employee_by_id(emp_id, user)
+    employee_name = employee.get("name", "Employee")
+
+    # Step 2: Update the employee
     update_response = await update_employee_by_id(emp_id, data, user)
 
-    # Step 2: Prepare sender info for notification
+    # Step 3: Prepare sender info for notification
     sender_info = {
         "id": user.get("id") or "unknown",
         "store_id": user.get("store_id"),
@@ -580,15 +590,15 @@ async def update_employee(emp_id: str, data: DepartmentUserUpdate, request: Requ
         "email": user.get("email")
     }
 
-    # Step 3: Create Notification object
+    # Step 4: Create Notification object
     notification = NotificationBase(
         sender=UserInfo(**sender_info),
         type_of_notification="Employee Management",
         title="Employee Updated",
-        message=f"{data.first_name}'s details have been updated."
+        message=f"{employee_name}'s details have been updated."
     )
 
-    # Step 4: Send Notification
+    # Step 5: Send Notification
     await create_notification(
         notification=notification,
         admin=True  # Notify admins

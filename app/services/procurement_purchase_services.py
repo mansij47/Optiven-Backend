@@ -17,6 +17,20 @@ stores_collection = db["Stores"]
 RECEIVED_MAP = {0: "Waiting", 1: "Received"}
 VALIDATION_MAP = {0: "Pending", 1: "Completed"}
 
+
+def round_purchase_order_prices(order: dict) -> dict:
+    """
+    Round all price-related fields in a purchase order to 2 decimal places
+    """
+    price_fields = ['amount', 'base_price', 'unit_price', 'vendor_tax']
+    for field in price_fields:
+        if field in order and order[field] is not None:
+            try:
+                order[field] = round(float(order[field]), 2)
+            except (ValueError, TypeError):
+                pass
+    return order
+
 async def get_all_purchase_orders(store_id: str):
     # 👇 Added sort so latest entries come first
     cursor = purchase_orders_collection.find(
@@ -42,6 +56,9 @@ async def get_all_purchase_orders(store_id: str):
             order["validation_status"] = raw_validation
         else:
             order["validation_status"] = "Pending"
+
+        # Round price fields to 2 decimal places
+        order = round_purchase_order_prices(order)
 
         result.append(PurchaseOrderResponse(**order))
     return result
@@ -70,6 +87,9 @@ async def get_purchase_order_by_id(order_id: str, store_id: str):
         order["validation_status"] = raw_validation
     else:
         order["validation_status"] = "Pending"
+
+    # Round price fields to 2 decimal places
+    order = round_purchase_order_prices(order)
 
     return PurchaseOrderDetailResponse(**order)
 
