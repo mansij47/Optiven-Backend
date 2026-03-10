@@ -82,6 +82,7 @@ async def add_sales_order(order_data: dict, store_id: str):
     order_data["total_order_price"] = round(subtotal, 2)
     order_data["order_id"] = await generate_order_id()
     order_data["customer_id"] = customer_id
+    order_data["has_pending_request"] = False  # ✅ Initialize request tracking
     
     # Set type and status based on inventory availability
     # logic refined: "Preorder" if product not in inventory, "Stock-out" if in inventory but no stock

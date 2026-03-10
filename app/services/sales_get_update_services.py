@@ -142,6 +142,9 @@ async def get_all_sales_orders(store_id: str):
         # ✅ Parse order status (existing logic preserved)
         order["status"] = parse_status_string(order.get("status", "0"))
 
+        # ✅ Ensure has_pending_request field exists (default to False for old orders)
+        order["has_pending_request"] = order.get("has_pending_request", False)
+
         # Cleanup (existing behavior)
         order.pop("order_status", None)
 
@@ -968,6 +971,9 @@ async def get_sales_order_by_id(order_id: str, store_id: str):
     
     # ✅ Include currency field
     order["currency"] = order.get("currency", "INR")
+    
+    # ✅ Ensure has_pending_request field exists (default to False for old orders)
+    order["has_pending_request"] = order.get("has_pending_request", False)
     
     order["status"] = parse_status_string(order.get("status", "0"))
 

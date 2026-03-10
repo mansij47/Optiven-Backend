@@ -31,7 +31,7 @@ async def signup(data:SignupModel) -> Dict[str, Any]:
 
     doc = data.model_dump()
     doc["password"] = hash_password(doc["password"])
-    now = datetime.utcnow().isoformat()
+    now = datetime.utcnow().strftime("%Y-%m-%d")
     doc["created_at"] = now
     doc["updated_at"] = now
 
@@ -55,6 +55,26 @@ async def login(email: str, password: str) -> Optional[Dict[str, Any]]:
     role= admin.get("role") if admin else None
     if not admin or not verify_password(password, admin["password"]):
         return None
+    
+    # Check if user is active (status should be 1)
+    user_status = admin.get("status", 0)
+    if user_status != 1:
+        raise HTTPException(status_code=403, detail="Account is inactive or disabled")
+    
+    # Check if store is active (for non-super_admin users)
+    if role != "super_admin":
+        store_id = admin.get("store_id", "")
+        if store_id:
+            store = await db.Stores.find_one({"store_id": store_id})
+            if not store:
+                raise HTTPException(status_code=404, detail="Store not found")
+            store_status = store.get("status", 0)
+            if store_status == 2:
+                raise HTTPException(status_code=403, detail="Store is disabled. Contact administrator.")
+            if store_status == 3:
+                raise HTTPException(status_code=403, detail="Store has been deleted. Contact administrator.")
+            if store_status != 1:
+                raise HTTPException(status_code=403, detail="Store is not active")
 
     token = create_access_token({
         "email": email,
@@ -104,7 +124,7 @@ async def get_profile(email: str):
 async def update_profile(email: str, payload: UpdateProfileModel) -> int:
     res = await db.Users.update_one(
         {"email": email},
-        {"$set": payload.model_dump(exclude_none=True) | {"updated_at": datetime.utcnow().isoformat()}}
+        {"$set": payload.model_dump(exclude_none=True) | {"updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
     )
     return res.modified_count
 
@@ -207,7 +227,7 @@ async def create_store(data: CreateStoreModel, send_email):
     if await db.Stores.find_one({"store_id": doc["store_id"]}):
         doc["store_id"] = await _next_id(db.Stores, "store_id", "ST")
         doc["org_id"] = str(org_id)
-    now = datetime.utcnow()
+    now = datetime.utcnow().strftime("%Y-%m-%d")
     doc["created_at"] = now
     doc["updated_at"] = now
     store_id = doc["store_id"]
@@ -240,7 +260,10 @@ async def create_store(data: CreateStoreModel, send_email):
             raise HTTPException(status_code=500, detail=f"Failed to send credentials: {str(e)}")
 
     # Insert user and store only after email is sent successfully (if required)
-    await db.Users.insert_one(user_model.model_dump())
+    user_doc = user_model.model_dump()
+    user_doc["created_at"] = now
+    user_doc["updated_at"] = now
+    await db.Users.insert_one(user_doc)
     await db.Stores.insert_one(doc)
 
     return {
@@ -322,7 +345,7 @@ async def get_store_by_id(store_id: str):
 
 async def edit_store(store_id: str, data: StoreUpdate) -> int:
     update_data = data.model_dump(exclude_none=True)
-    update_data["updated_at"] = datetime.utcnow().isoformat()
+    update_data["updated_at"] = datetime.utcnow().strftime("%Y-%m-%d")
 
     update_query = {
         "$set": update_data  # ✅ Set everything including empty arrays
@@ -332,15 +355,84 @@ async def edit_store(store_id: str, data: StoreUpdate) -> int:
     return res.modified_count
 
 async def delete_store(store_id: str) -> int:
-    res = await db.Stores.delete_one({"store_id": store_id})
-    return res.deleted_count
+    # Soft delete: Set store status to 3 (deleted)
+    res = await db.Stores.update_one(
+        {"store_id": store_id},
+        {"$set": {"status": 3, "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
+    )
+    
+    # Also mark all users associated with this store as inactive/deleted
+    if res.modified_count > 0:
+        await db.Users.update_many(
+            {"store_id": store_id},
+            {"$set": {"status": 0, "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
+        )
+    
+    return res.modified_count
 
 async def delete_multiple_stores(store_ids: List[str]) -> int:
-    res = await db.Stores.delete_many({"store_id": {"$in": store_ids}})
-    return res.deleted_count
+    # Soft delete: Set status to 3 (deleted) for multiple stores
+    res = await db.Stores.update_many(
+        {"store_id": {"$in": store_ids}},
+        {"$set": {"status": 3, "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
+    )
+    
+    # Also mark all users associated with these stores as inactive/deleted
+    if res.modified_count > 0:
+        await db.Users.update_many(
+            {"store_id": {"$in": store_ids}},
+            {"$set": {"status": 0, "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
+        )
+    
+    return res.modified_count
+
+async def permanent_delete_store(store_id: str) -> int:
+    """
+    Permanently delete a store and all its related data.
+    This is a hard delete - all data will be removed from the database.
+    """
+    # Delete the store
+    store_res = await db.Stores.delete_one({"store_id": store_id})
+    
+    # Delete all users associated with this store
+    await db.Users.delete_many({"store_id": store_id})
+    
+    # Delete all inventory items for this store
+    await db.Inventory.delete_many({"store_id": store_id})
+    
+    # Delete all orders for this store
+    await db.Orders.delete_many({"store_id": store_id})
+    
+    # Delete all sales for this store
+    await db.Sales.delete_many({"store_id": store_id})
+    
+    # Delete all purchase orders for this store
+    await db.PurchaseOrders.delete_many({"store_id": store_id})
+    
+    # Delete all notifications for this store
+    await db.Notifications.delete_many({"store_id": store_id})
+    
+    return store_res.deleted_count
 
 async def update_store_status(store_id: str, status: int)-> int:
-    res = await db.Stores.update_one({"store_id": store_id}, {"$set": {"status": status}})
+    res = await db.Stores.update_one(
+        {"store_id": store_id},
+        {"$set": {"status": status, "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
+    )
+    
+    # When disabling a store (status=2), also disable all its users
+    if status == 2 and res.modified_count > 0:
+        await db.Users.update_many(
+            {"store_id": store_id},
+            {"$set": {"status": 0, "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
+        )
+    # When re-activating a store (status=1), reactivate all its users
+    elif status == 1 and res.modified_count > 0:
+        await db.Users.update_many(
+            {"store_id": store_id},
+            {"$set": {"status": 1, "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
+        )
+    
     return res.modified_count
 
 # ───────────────────────── CATEGORY / SUBCATEGORY
@@ -425,7 +517,7 @@ async def create_category(data: AddCategoryModel) -> str:
     doc["sub_category_count"] = len(doc.get("sub_categories", []))
 
     # Add timestamps
-    ts = datetime.utcnow().isoformat()
+    ts = datetime.utcnow().strftime("%Y-%m-%d")
     doc["created_at"] = ts
     doc["updated_at"] = ts
 
@@ -439,7 +531,7 @@ async def edit_category(category_id: str, data: EditCategoryModel) -> int:
     if "sub_categories" in update_data:
         update_data["sub_category_count"] = len(update_data["sub_categories"])
 
-    update_data["updated_at"] = datetime.utcnow().isoformat()
+    update_data["updated_at"] = datetime.utcnow().strftime("%Y-%m-%d")
 
     res = await db.Categories.update_one(
         {"category_id": category_id},
@@ -467,8 +559,8 @@ async def add_subcategory(category_id: str, data: AddSubcategoryModel) -> str:
         sub_id = f"SUB{str(max(nums)+1 if nums else 1).zfill(3)}"
     sub_doc = data.model_dump() | {
         "sub_category_id": sub_id,
-        "created_at": datetime.utcnow().isoformat(),
-        "updated_at": datetime.utcnow().isoformat()
+        "created_at": datetime.utcnow().strftime("%Y-%m-%d"),
+        "updated_at": datetime.utcnow().strftime("%Y-%m-%d")
     }
     await db.Categories.update_one(
         {"category_id": category_id},
@@ -479,7 +571,7 @@ async def add_subcategory(category_id: str, data: AddSubcategoryModel) -> str:
 
 async def edit_subcategory(sub_id: str, data: EditSubcategoryModel) -> int:
     update_fields = {f"sub_categories.$.{k}": v for k, v in data.model_dump(exclude_none=True).items()}
-    update_fields["sub_categories.$.updated_at"] = datetime.utcnow().isoformat()
+    update_fields["sub_categories.$.updated_at"] = datetime.utcnow().strftime("%Y-%m-%d")
     res = await db.Categories.update_one(
         {"sub_categories.sub_category_id": sub_id},
         {"$set": update_fields}
@@ -512,7 +604,7 @@ async def delete_subcategory_from_category(category_id: str, sub_category_id: st
             "$set": {
             "sub_categories": updated_subcategories,
             "sub_category_count": len(updated_subcategories),  # ✅ update count
-            "updated_at": datetime.utcnow().isoformat()
+            "updated_at": datetime.utcnow().strftime("%Y-%m-%d")
             }
         }
     )
@@ -559,7 +651,7 @@ async def delete_subcategory_from_category(category_id: str, sub_category_id: st
 # ───────────────────────── HELP
 async def submit_help(data: HelpModel, user) -> str:
     doc = data.model_dump()
-    doc["submitted_at"] = datetime.now().isoformat()
+    doc["submitted_at"] = datetime.now().strftime("%Y-%m-%d")
 
     # Automatically add requested_by from middleware user
     doc["requested_by"] = {

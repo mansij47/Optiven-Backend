@@ -5,6 +5,7 @@ from app.models.admin_login_model import LoginModel
 # from app.services import admin_login_service as svc
 
 from typing import Optional,List
+from datetime import datetime
 from app import db
 import traceback
 from jose import jwt, JWTError
@@ -135,10 +136,15 @@ async def send_notification(
 
 
 @router.get("/notifications")
-async def get_notifications(request: Request, status: Optional[int] = None, show_deleted: bool = False):
+async def get_notifications(
+    request: Request, 
+    status: Optional[int] = None, 
+    show_deleted: bool = False,
+    sort: Optional[str] = Query(None, description="Sort fields like '-date,-time' for descending order")
+):
     user = request.state.user  # Token-decoded user info: id, role, etc.
     try:
-        return await get_all_notifications(user, status, show_deleted)
+        return await get_all_notifications(user, status, show_deleted, sort)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
