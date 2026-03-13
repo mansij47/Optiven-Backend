@@ -160,8 +160,13 @@ async def get_orders(request: Request):
 
 #delete requested order
 @router.delete("/requested-orders/{order_id}")
-async def delete_requested_order_route(order_id: str):
-    response = await delete_requested_order(order_id)
+async def delete_requested_order_route(order_id: str, request: Request):
+    user = request.state.user
+    if user.get("role") not in ["procurement", "admin"]:
+        raise HTTPException(status_code=403, detail="Only procurement or admin users are allowed.")
+    
+    store_id = user.get("store_id")
+    response = await delete_requested_order(order_id, store_id)
     return response
 
 
@@ -298,7 +303,7 @@ async def get_return_detail_by_id(request: Request, return_id: str):
 
 
 #Mark Return to Vendor as Received (Update status to completed)
-@router.patch("/returnToVendor-mark-received")
+@router.put("/returnToVendor-mark-received")
 async def mark_return_received(request: Request, return_ids: list[str]):
     user = request.state.user
     if user.get("role") != "procurement":
@@ -366,8 +371,13 @@ async def download_contract_pdf(contract_id: str, request: Request):
 
 
 @router.put("/purchase-orders/{order_id}/mark-received")
-async def mark_as_received(order_id: str):
-    return await procurement_purchase_services.mark_purchase_order_as_received(order_id)
+async def mark_as_received(order_id: str, request: Request):
+    user = request.state.user
+    if user.get("role") != "procurement":
+        raise HTTPException(status_code=403, detail="Only procurement users are allowed.")
+    
+    store_id = user.get("store_id")
+    return await procurement_purchase_services.mark_purchase_order_as_received(order_id, store_id)
 
 
 # Send Purchase Order Email

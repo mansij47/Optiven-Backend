@@ -100,7 +100,10 @@ async def validate_purchase_order_preview(
     """
 
   
-    order = await db["PurchaseOrders"].find_one({"order_id": data.order_id})
+    order = await db["PurchaseOrders"].find_one({
+        "order_id": data.order_id,
+        "store_id": store_id
+    })
     if not order:
         raise HTTPException(status_code=404, detail="Purchase order not found.")
 
@@ -215,7 +218,10 @@ def generate_id(prefix: str) -> str:
 
 
 async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str, org_id: str, background_tasks: BackgroundTasks = None):
-    base_order = await db["PurchaseOrders"].find_one({"order_id": data.order_id})
+    base_order = await db["PurchaseOrders"].find_one({
+        "order_id": data.order_id,
+        "store_id": store_id
+    })
     if not base_order:
         raise HTTPException(status_code=404, detail="Order not found")
 
@@ -824,7 +830,10 @@ async def submit_purchase_order(data: PurchaseOrderSubmitRequest, store_id: str,
 
     # --- Update PurchaseOrder validation_status to "completed" ---
     await db["PurchaseOrders"].update_one(
-        {"order_id": data.order_id},
+        {
+            "order_id": data.order_id,
+            "store_id": store_id
+        },
         {
             "$set": {
                 "validation_status": "Completed", 

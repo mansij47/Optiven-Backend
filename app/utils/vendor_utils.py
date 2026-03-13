@@ -22,14 +22,20 @@ async def generate_vendor_id():
         return "VEN001"
 
 
-async def get_or_create_vendor_id(vendor_name: str):
+async def get_or_create_vendor_id(vendor_name: str, store_id: str = None):
     """
-    Check if vendor exists by vendor_name.
+    Check if vendor exists by vendor_name and store_id.
     If exists, return existing vendor_id.
     If not, generate and return new vendor_id.
     """
+    query = {"vendor_name": vendor_name}
+    
+    # ✅ Include store_id if provided to ensure vendor uniqueness per store
+    if store_id:
+        query["store_id"] = store_id
+    
     existing_vendor = await db.Vendors.find_one(
-        {"vendor_name": vendor_name},
+        query,
         {"vendor_id": 1, "_id": 0}
     )
     

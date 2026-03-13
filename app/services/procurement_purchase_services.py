@@ -95,15 +95,18 @@ async def get_purchase_order_by_id(order_id: str, store_id: str):
 
 
 
-async def mark_purchase_order_as_received(order_id: str) -> dict:
-    existing_order = await purchase_orders_collection.find_one({"order_id": order_id})
+async def mark_purchase_order_as_received(order_id: str, store_id: str) -> dict:
+    existing_order = await purchase_orders_collection.find_one({
+        "order_id": order_id,
+        "store_id": store_id
+    })
     
     if not existing_order:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
 
     # Set numeric value for consistent mapping
     await purchase_orders_collection.update_one(
-        {"order_id": order_id},
+        {"order_id": order_id, "store_id": store_id},
         {"$set": {"received_status": 1}}
     )
     
