@@ -99,14 +99,14 @@ async def add_contract(contract_data: Contract, store_id: str, request: Request)
     try:
         vendor_id = None
 
-        # ✅ Check vendor existence by vendor_name only
+        # ✅ Check vendor existence by vendor_name AND store_id
         if contract_data.vendor_name:
-            # Get or create vendor_id based on vendor_name
-            vendor_id = await get_or_create_vendor_id(contract_data.vendor_name)
+            # Get or create vendor_id based on vendor_name and store_id
+            vendor_id = await get_or_create_vendor_id(contract_data.vendor_name, store_id)
             
-            # Check if vendor with this name already exists in Vendors collection
+            # Check if vendor with this name already exists in Vendors collection for this store
             existing_vendor = await VENDOR_COLLECTION.find_one(
-                {"vendor_name": contract_data.vendor_name},
+                {"vendor_name": contract_data.vendor_name, "store_id": store_id},
                 {"vendor_id": 1, "_id": 0}
             )
             
@@ -243,7 +243,10 @@ async def update_contract_status(contract_id: str, store_id: str, action: str, v
     if action == "accept":
         new_status = "accepted"
 
-        existing_po = await purchase_orders_collection.find_one({"contract_id": contract_id})
+        existing_po = await purchase_orders_collection.find_one({
+            "contract_id": contract_id,
+            "store_id": store_id
+        })
         if not existing_po:
             purchase_order = {
                 "order_id": f"PO{contract_id[-4:]}",
@@ -253,6 +256,7 @@ async def update_contract_status(contract_id: str, store_id: str, action: str, v
                 "vendor_email": vendor_email or contract.get("vendor_email"),
                 "secondary_email": secondary_email or contract.get("secondary_email"),
                 "delivery_date": contract["date_of_delivery"],
+                "received_status": 0,  # 0 = Waiting, 1 = Received
                 "validation_status": "Pending",
                 "product_name": contract.get("product_name"),
                 "amount": float(float(contract["quantity"]) * float(contract["unit_price"])),
@@ -278,7 +282,8 @@ async def update_contract_status(contract_id: str, store_id: str, action: str, v
                 "warranty_unit": contract.get("warranty_unit"),
                 "type": contract.get("type", "order"),
                 "valid_upto": contract.get("valid_upto"),
-
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
             }
             await purchase_orders_collection.insert_one(purchase_order)
 

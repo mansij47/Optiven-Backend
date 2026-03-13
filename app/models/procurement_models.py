@@ -225,6 +225,7 @@ class PurchaseOrderResponse(BaseModel):
     base_price: Optional[float] = None
     unit_price: Optional[float] = None
     vendor_tax: Optional[float] = 0
+    returnable: Optional[bool] = None
     return_conditions: Optional[List[str]] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

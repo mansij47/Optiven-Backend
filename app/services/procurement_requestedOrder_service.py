@@ -19,15 +19,18 @@ async def get_all_requested_orders(store_id: str):
     return orders
 
 # Delete Requested Order
-async def delete_requested_order(order_id: str):
+async def delete_requested_order(order_id: str, store_id: str = None):
     try:
         # Validate ObjectId
         if not ObjectId.is_valid(order_id):
             return {"success": False, "message": "Invalid order ID"}
         
-        result = await requested_orders_collection.delete_one({
-            "_id": ObjectId(order_id)
-        })
+        # ✅ Include store_id to prevent deleting orders from other stores
+        query = {"_id": ObjectId(order_id)}
+        if store_id:
+            query["store_id"] = store_id
+        
+        result = await requested_orders_collection.delete_one(query)
         
         if result.deleted_count == 1:
             return {"success": True, "message": "Requested order deleted successfully"}

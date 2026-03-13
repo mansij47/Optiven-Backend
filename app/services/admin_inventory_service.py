@@ -398,13 +398,21 @@ async def get_all_products(store_id: str):
             products.append(product)
 
         # ✅ Sort stock-out & low stock first
-        products.sort(
-            key=lambda p: (
-                2 if p["status"] in ["Stock-out", "Low Stock"] else 1,
-                p.get("created_at", "9999-99-99")  # String date comparison
-            ),
-            reverse=True  # Stock-out/Low Stock at top (2 > 1), then most recent first
-        )
+        def get_sort_key(p):
+            status_priority = 2 if p["status"] in ["Stock-out", "Low Stock"] else 1
+            
+            # Handle created_at - could be datetime or string
+            created_at = p.get("created_at")
+            if isinstance(created_at, datetime):
+                created_at_str = created_at.isoformat()
+            elif isinstance(created_at, str):
+                created_at_str = created_at
+            else:
+                created_at_str = "9999-99-99"
+            
+            return (status_priority, created_at_str)
+        
+        products.sort(key=get_sort_key, reverse=True)
 
         return {
             "total_count": len(products),
@@ -546,8 +554,11 @@ async def delete_product_service(product_id: str, store_id: str = None):
         if store_id:
             query["store_id"] = store_id
 
-        # Delete all associated items first
-        items_deleted = await db.ProductItems.delete_many({"product_id": product_id})
+        # Delete all associated items first (✅ MUST include store_id to prevent deleting items from other stores)
+        item_query = {"product_id": product_id}
+        if store_id:
+            item_query["store_id"] = store_id
+        items_deleted = await db.ProductItems.delete_many(item_query)
         
         # Then delete the product
         result = await db.Inventory.delete_one(query)
