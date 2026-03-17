@@ -334,11 +334,21 @@ async def send_purchase_order_email_service(order_id: str, store_id: str, recipi
                 "pdf_attached": pdf_path is not None
             }
         else:
+            first_error = next(
+                (
+                    item.get("error")
+                    for item in email_result.get("details", [])
+                    if item.get("status") == "failed" and item.get("error")
+                ),
+                "Unknown SMTP error"
+            )
             raise HTTPException(
                 status_code=500, 
-                detail=f"Failed to send emails. All {email_result['total_emails']} attempts failed."
+                detail=f"Failed to send emails. All {email_result['total_emails']} attempts failed. Reason: {first_error}"
             )
-            
+
+    except HTTPException:
+        raise
     except Exception as e:
         # Clean up PDF file in case of error
         if pdf_path and os.path.exists(pdf_path):
