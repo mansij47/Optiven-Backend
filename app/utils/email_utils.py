@@ -1,5 +1,6 @@
 import smtplib
 import os
+import socket
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
@@ -7,7 +8,20 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 
-from app.config import EMAIL_HOST, EMAIL_PASSWORD, EMAIL_PORT, EMAIL_USER, LOGIN_URL
+from app.config import EMAIL_HOST, EMAIL_PASSWORD, EMAIL_PORT, EMAIL_TIMEOUT_SECONDS, EMAIL_USER, LOGIN_URL
+
+
+def _missing_email_config_keys() -> list:
+  missing = []
+  if not EMAIL_HOST:
+    missing.append("EMAIL_HOST")
+  if not EMAIL_USER:
+    missing.append("EMAIL_USER")
+  if not EMAIL_PASSWORD:
+    missing.append("EMAIL_PASSWORD")
+  if not EMAIL_PORT:
+    missing.append("EMAIL_PORT")
+  return missing
 
 # 👇 Your new HTML template function
 def get_welcome_template(email: str, password: str, login_url: str) -> str:
@@ -62,6 +76,11 @@ def get_welcome_template(email: str, password: str, login_url: str) -> str:
 
 def send_welcome_email(to_email: str, password: str) -> bool:
     try:
+        missing = _missing_email_config_keys()
+        if missing:
+            print(f" Error sending email: missing SMTP config: {', '.join(missing)}")
+            return False
+
         # ✅ Generate HTML with passed values
         html = get_welcome_template(
             email=to_email,
@@ -88,8 +107,10 @@ def send_welcome_email(to_email: str, password: str) -> bool:
             msg.attach(image)
 
         # Send
-        with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
+        with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT, timeout=EMAIL_TIMEOUT_SECONDS) as server:
+            server.ehlo()
             server.starttls()
+            server.ehlo()
             server.login(EMAIL_USER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_USER, to_email, msg.as_string())
 
@@ -182,6 +203,23 @@ def send_purchase_order_email(order_data: dict, recipient_emails: list, subject:
     Returns:
         Dictionary with success status and details
     """
+    missing = _missing_email_config_keys()
+    if missing:
+      return {
+        "success": False,
+        "total_emails": len(recipient_emails),
+        "successful_emails": 0,
+        "failed_emails": len(recipient_emails),
+        "details": [
+          {
+            "email": email,
+            "status": "failed",
+            "error": f"Missing SMTP config: {', '.join(missing)}",
+          }
+          for email in recipient_emails
+        ],
+      }
+
     results = []
     
     for email in recipient_emails:
@@ -219,16 +257,21 @@ def send_purchase_order_email(order_data: dict, recipient_emails: list, subject:
                     print(f"⚠️ Failed to attach PDF: {attachment_error}")
 
             # Send email
-            with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
+            with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT, timeout=EMAIL_TIMEOUT_SECONDS) as server:
+                server.ehlo()
                 server.starttls()
+                server.ehlo()
                 server.login(EMAIL_USER, EMAIL_PASSWORD)
                 server.sendmail(EMAIL_USER, email, msg.as_string())
 
             print(f"✅ Purchase order email sent successfully to {email}")
             results.append({"email": email, "status": "success"})
 
-        except Exception as e:
+        except (smtplib.SMTPException, OSError, socket.timeout) as e:
             print(f"❌ Error sending purchase order email to {email}: {e}")
+            results.append({"email": email, "status": "failed", "error": str(e)})
+        except Exception as e:
+            print(f"❌ Unexpected error sending purchase order email to {email}: {e}")
             results.append({"email": email, "status": "failed", "error": str(e)})
     
     success_count = len([r for r in results if r["status"] == "success"])
