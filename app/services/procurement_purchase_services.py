@@ -343,8 +343,8 @@ async def send_purchase_order_email_service(order_id: str, store_id: str, recipi
                 "Unknown SMTP error"
             )
             raise HTTPException(
-                status_code=500, 
-                detail=f"Failed to send emails. All {email_result['total_emails']} attempts failed. Reason: {first_error}"
+                status_code=500,
+                detail=f"Failed to send emails. All {email_result['total_emails']} attempts failed. Reason: {first_error}",
             )
 
     except HTTPException:

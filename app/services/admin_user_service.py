@@ -113,19 +113,25 @@ async def create_department_user(data, user_info):
             print(f"Warning: Failed to update store departments: {str(e)}")
             # Don't fail the entire operation for this
 
-        # Send welcome email with original password (handle errors)
+        # Send welcome email with original password.
+        # Do not fail employee creation if email transport fails in production.
+        email_sent = False
         try:
-            res = send_welcome_email(to_email=normalized_email, password=data.password)
-            if not res:
-                raise HTTPException(status_code=502, detail="Failed to send welcome email")
+            email_sent = send_welcome_email(to_email=normalized_email, password=data.password)
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Failed to send welcome email: {str(e)}")
+            print(f"Warning: Failed to send welcome email to {normalized_email}: {str(e)}")
+
+        if email_sent:
+            message = f"{data.role.capitalize()} employee created and email sent successfully"
+        else:
+            message = f"{data.role.capitalize()} employee created successfully, but welcome email could not be sent"
 
         # Return success message
         return {
-            "message": f"{data.role.capitalize()} employee created and email sent successfully",
+            "message": message,
             "email": normalized_email,
-            "employee_id": new_id  # returning new UUID as employee identifier
+            "employee_id": new_id,
+            "email_sent": email_sent,
         }
 
     except HTTPException:

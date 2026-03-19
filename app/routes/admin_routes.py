@@ -632,7 +632,7 @@ async def delete_employee(emp_id: str, request: Request):
         sender=UserInfo(**sender_info),
         type_of_notification="Employee Management",
         title="Employee Removed",
-        message=f"Employee {employee.get('name', {}).get('first_name', '')} has been removed from the system."
+        message=f"Employee {employee.get('name', 'Unknown')} has been removed from the system."
     )
 
     # Step 5: Send Notification
