@@ -250,16 +250,21 @@ async def create_store(data: CreateStoreModel, send_email):
     if existing_user:
         raise HTTPException(status_code=400, detail="User with this email already exists")
 
-    # If email is True, send credentials first
+    # Send credentials email if requested, but do not block store creation on mail transport errors.
+    welcome_email_sent = None
     if send_email:
+        welcome_email_sent = False
         try:
-            res = send_welcome_email(to_email=doc.get("store_email"), password=doc.get("password"))
-            if not res:
-                raise HTTPException(status_code=500, detail="Failed to send welcome email")
+            welcome_email_sent = send_welcome_email(
+                to_email=doc.get("store_email"),
+                password=doc.get("password"),
+            )
+            if not welcome_email_sent:
+                print("Warning: Welcome email could not be sent during store creation")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to send credentials: {str(e)}")
+            print(f"Warning: Failed to send credentials email during store creation: {str(e)}")
 
-    # Insert user and store only after email is sent successfully (if required)
+    # Insert user and store regardless of email delivery outcome.
     user_doc = user_model.model_dump()
     user_doc["created_at"] = now
     user_doc["updated_at"] = now
@@ -269,7 +274,8 @@ async def create_store(data: CreateStoreModel, send_email):
     return {
         "store_id": store_id,
         "store_email": doc.get("store_email"),
-        "password": password
+        "password": password,
+        "welcome_email_sent": welcome_email_sent,
     }
 
 # async def get_store_by_id(store_id: str):

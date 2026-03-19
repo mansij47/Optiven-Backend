@@ -12,16 +12,51 @@ from app.config import EMAIL_HOST, EMAIL_PASSWORD, EMAIL_PORT, EMAIL_TIMEOUT_SEC
 
 
 def _missing_email_config_keys() -> list:
-  missing = []
-  if not EMAIL_HOST:
-    missing.append("EMAIL_HOST")
-  if not EMAIL_USER:
-    missing.append("EMAIL_USER")
-  if not EMAIL_PASSWORD:
-    missing.append("EMAIL_PASSWORD")
-  if not EMAIL_PORT:
-    missing.append("EMAIL_PORT")
-  return missing
+    missing = []
+    if not EMAIL_HOST:
+        missing.append("EMAIL_HOST")
+    if not EMAIL_USER:
+        missing.append("EMAIL_USER")
+    if not EMAIL_PASSWORD:
+        missing.append("EMAIL_PASSWORD")
+    if not EMAIL_PORT:
+        missing.append("EMAIL_PORT")
+    return missing
+
+
+def _smtp_ports_to_try() -> list[int]:
+    """Try configured port first, then common SMTP ports."""
+    ports = [EMAIL_PORT, 587, 465, 2525]
+    unique_ports = []
+    for port in ports:
+        try:
+            parsed = int(port)
+            if parsed > 0 and parsed not in unique_ports:
+                unique_ports.append(parsed)
+        except (TypeError, ValueError):
+            continue
+    return unique_ports or [587]
+
+
+def _send_smtp_message(msg: MIMEMultipart, to_email: str) -> tuple[bool, str | None]:
+    """Send an already-built MIME email using SMTP port failover."""
+    last_error = None
+    for port in _smtp_ports_to_try():
+        try:
+            with smtplib.SMTP(EMAIL_HOST, port, timeout=EMAIL_TIMEOUT_SECONDS) as server:
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(EMAIL_USER, EMAIL_PASSWORD)
+                server.sendmail(EMAIL_USER, to_email, msg.as_string())
+            return True, None
+        except (smtplib.SMTPException, OSError, socket.timeout) as e:
+            last_error = f"Port {port}: {e}"
+            print(f"⚠️ SMTP send failed on port {port}: {e}")
+        except Exception as e:
+            last_error = f"Port {port}: {e}"
+            print(f"⚠️ Unexpected SMTP error on port {port}: {e}")
+    return False, last_error or "All SMTP ports failed"
 
 # 👇 Your new HTML template function
 def get_welcome_template(email: str, password: str, login_url: str) -> str:
@@ -106,13 +141,10 @@ def send_welcome_email(to_email: str, password: str) -> bool:
             image.add_header("Content-Disposition", "inline", filename="image.jpeg")
             msg.attach(image)
 
-        # Send
-        with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT, timeout=EMAIL_TIMEOUT_SECONDS) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(EMAIL_USER, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_USER, to_email, msg.as_string())
+        sent, send_error = _send_smtp_message(msg, to_email)
+        if not sent:
+          print(f" Error sending email to {to_email}: {send_error}")
+          return False
 
         print(" Email sent successfully to", to_email)
 
@@ -221,17 +253,16 @@ def send_purchase_order_email(order_data: dict, recipient_emails: list, subject:
       }
 
     results = []
-    
+
     for email in recipient_emails:
         try:
-            # Generate HTML email content
             html = get_purchase_order_template(order_data, custom_message)
+            email_subject = f"{subject} - {order_data.get('order_id', 'N/A')}"
 
             print(f"📧 Sending purchase order email to: {email}")
-            
-            # Create email
+
             msg = MIMEMultipart("related")
-            msg["Subject"] = f"{subject} - {order_data.get('order_id', 'N/A')}"
+            msg["Subject"] = email_subject
             msg["From"] = EMAIL_USER
             msg["To"] = email
 
@@ -239,37 +270,30 @@ def send_purchase_order_email(order_data: dict, recipient_emails: list, subject:
             alternative.attach(MIMEText(html, "html"))
             msg.attach(alternative)
 
-            # Attach PDF if provided
             if pdf_path and os.path.exists(pdf_path):
                 try:
                     with open(pdf_path, "rb") as attachment:
-                        part = MIMEBase('application', 'octet-stream')
+                        part = MIMEBase("application", "octet-stream")
                         part.set_payload(attachment.read())
-                    
+
                     encoders.encode_base64(part)
                     part.add_header(
-                        'Content-Disposition',
-                        f'attachment; filename= "PurchaseOrder_{order_data.get("order_id", "Unknown")}.pdf"'
+                        "Content-Disposition",
+                        f'attachment; filename="PurchaseOrder_{order_data.get("order_id", "Unknown")}.pdf"',
                     )
                     msg.attach(part)
                     print(f"📎 PDF attachment added: {pdf_path}")
                 except Exception as attachment_error:
                     print(f"⚠️ Failed to attach PDF: {attachment_error}")
 
-            # Send email
-            with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT, timeout=EMAIL_TIMEOUT_SECONDS) as server:
-                server.ehlo()
-                server.starttls()
-                server.ehlo()
-                server.login(EMAIL_USER, EMAIL_PASSWORD)
-                server.sendmail(EMAIL_USER, email, msg.as_string())
+            sent, send_error = _send_smtp_message(msg, email)
+            if sent:
+                print(f"✅ Purchase order email sent successfully to {email}")
+                results.append({"email": email, "status": "success", "method": "smtp"})
+            else:
+                print(f"❌ Error sending purchase order email to {email}: {send_error}")
+                results.append({"email": email, "status": "failed", "error": str(send_error)})
 
-            print(f"✅ Purchase order email sent successfully to {email}")
-            results.append({"email": email, "status": "success"})
-
-        except (smtplib.SMTPException, OSError, socket.timeout) as e:
-            print(f"❌ Error sending purchase order email to {email}: {e}")
-            results.append({"email": email, "status": "failed", "error": str(e)})
         except Exception as e:
             print(f"❌ Unexpected error sending purchase order email to {email}: {e}")
             results.append({"email": email, "status": "failed", "error": str(e)})
