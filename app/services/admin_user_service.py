@@ -23,10 +23,21 @@ async def create_department_user(data, user_info):
         if not org_id or not store_id:
             raise HTTPException(status_code=403, detail="Missing org_id or store_id in token")
 
-        # Check if email already exists in Users collection
-        existing = await db.Users.find_one({"email": data.email})
+        normalized_email = data.email.strip().lower()
+
+        # Check if email already exists in current store only
+        existing = await db.Users.find_one(
+            {
+                "email": normalized_email,
+                "org_id": org_id,
+                "store_id": store_id,
+            }
+        )
         if existing:
-            raise HTTPException(status_code=400, detail="User with this email already exists")
+            raise HTTPException(
+                status_code=400,
+                detail="User with this email already exists in this store",
+            )
 
         # Hash the password securely
         hashed_password = bcrypt.hashpw(data.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -61,7 +72,7 @@ async def create_department_user(data, user_info):
                 "first_name": data.first_name,
                 "last_name": data.last_name
             },
-            email=data.email,
+            email=normalized_email,
             password=hashed_password,
             role=data.role,
             org_id=org_id,
@@ -104,19 +115,21 @@ async def create_department_user(data, user_info):
 
         # Send welcome email with original password (handle errors)
         try:
-            res = send_welcome_email(to_email=data.email, password=data.password)
+            res = send_welcome_email(to_email=normalized_email, password=data.password)
             if not res:
-                raise HTTPException(status_code=404, detail="Failed to send welcome email")
+                raise HTTPException(status_code=502, detail="Failed to send welcome email")
         except Exception as e:
-            raise HTTPException(status_code=404, detail=f"User already exist: {str(e)}")
+            raise HTTPException(status_code=502, detail=f"Failed to send welcome email: {str(e)}")
 
         # Return success message
         return {
             "message": f"{data.role.capitalize()} employee created and email sent successfully",
-            "email": data.email,
+            "email": normalized_email,
             "employee_id": new_id  # returning new UUID as employee identifier
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create employee: {str(e)}")
     
@@ -208,10 +221,18 @@ async def update_employee_by_id(emp_id: str, data, user_info):
         update_data["name.last_name"] = data.last_name
 
     if getattr(data, "email", None):
-        existing = await db.Users.find_one({"email": data.email, "id": {"$ne": emp_id}})
+        normalized_email = data.email.strip().lower()
+        existing = await db.Users.find_one(
+            {
+                "email": normalized_email,
+                "id": {"$ne": emp_id},
+                "org_id": org_id,
+                "store_id": store_id,
+            }
+        )
         if existing:
-            raise HTTPException(status_code=400, detail="Another user with this email already exists")
-        update_data["email"] = data.email
+            raise HTTPException(status_code=400, detail="Another user with this email already exists in this store")
+        update_data["email"] = normalized_email
 
     if getattr(data, "phone", None):
         update_data["phone"] = data.phone
