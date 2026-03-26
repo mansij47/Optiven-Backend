@@ -1,5 +1,6 @@
 from datetime import datetime
-from pydantic import BaseModel, EmailStr
+import re
+from pydantic import BaseModel, EmailStr, validator
 from typing import List, Optional, Literal, Union
 
 # ──────────────────────────────────────────
@@ -91,6 +92,33 @@ class ChangePasswordModel(BaseModel):
     new_password: str
 
 
+class SetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+    confirm_password: str
+
+    @validator("new_password")
+    def validate_new_password(cls, value: str) -> str:
+        if len(value) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        if not re.search(r"[A-Z]", value):
+            raise ValueError("Password must include at least one uppercase letter")
+        if not re.search(r"[a-z]", value):
+            raise ValueError("Password must include at least one lowercase letter")
+        if not re.search(r"\d", value):
+            raise ValueError("Password must include at least one number")
+        if not re.search(r"[^A-Za-z0-9]", value):
+            raise ValueError("Password must include at least one special character")
+        return value
+
+    @validator("confirm_password")
+    def validate_confirm_password(cls, value: str, values: dict) -> str:
+        new_password = values.get("new_password")
+        if new_password is not None and value != new_password:
+            raise ValueError("confirm_password must match new_password")
+        return value
+
+
 
 
 
@@ -121,9 +149,9 @@ class CreateStoreModel(BaseModel):
     social_media: Optional[str] = None
     website: Optional[str] = None
     address: AddressModel                 # *
-    admin_id: str                         # *
+    admin_id: Optional[str] = None        # backend-generated (ADM001 format)
     store_email: str                      # *
-    password: str                         # * added password field
+    password: Optional[str] = None        # optional for set-password-link onboarding
     status: Optional[int] = 0             # 0=draft
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -230,9 +258,17 @@ class UpdateUserModel(BaseModel):
     name: Optional[NameModel] = None
     joining_date: Optional[str] = None
     termination_date: Optional[Union[str, None]] = None
+
+
+class SetPasswordStatusRequest(BaseModel):
+    token: str
     status: Optional[int] = None
     first_login: Optional[bool] = None
     extra: Optional[str] = None
+
+
+class SetPasswordResendRequest(BaseModel):
+    token: str
 
 # ──────────────────────────────────────────
 #  D.  CATEGORY  (Categories collection)

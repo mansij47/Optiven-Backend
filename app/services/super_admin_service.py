@@ -1,11 +1,17 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 import uuid
+import secrets
+import asyncio
+import logging
+import hashlib
 from app.models.store_model import StoresResponse
 from fastapi import HTTPException, Request
 from bson import ObjectId
+from pymongo import ReturnDocument
 
 from app.db import db
+from app.config import SET_PASSWORD_TOKEN_EXPIRE_MINUTES
 from app.utils.auth import hash_password, verify_password, create_access_token
 from app.models.super_admin_models import (
     SignupModel, StoreUpdate, SuperAdminSignupModel, UpdateProfileModel, ChangePasswordModel,
@@ -16,6 +22,8 @@ from app.models.super_admin_models import (
 )
 from app.utils.email_utils import send_welcome_email
 
+logger = logging.getLogger(__name__)
+
 # ───────────────────────── ID helper
 async def _next_id(col, field_: str, prefix: str) -> str:
     last = await col.find_one({field_: {"$regex": f"^{prefix}\\d+$"}}, sort=[(field_, -1)])
@@ -23,6 +31,122 @@ async def _next_id(col, field_: str, prefix: str) -> str:
         return f"{prefix}001"
     next_num = int(last[field_][len(prefix):]) + 1
     return f"{prefix}{str(next_num).zfill(3)}"
+
+
+async def _get_max_existing_admin_number() -> int:
+    try:
+        cursor = db.Users.aggregate(
+            [
+                {"$match": {"id": {"$regex": "^ADM\\d+$"}}},
+                {
+                    "$project": {
+                        "num": {
+                            "$toInt": {
+                                "$substrBytes": [
+                                    "$id",
+                                    3,
+                                    {"$subtract": [{"$strLenBytes": "$id"}, 3]},
+                                ]
+                            }
+                        }
+                    }
+                },
+                {"$group": {"_id": None, "max_num": {"$max": "$num"}}},
+            ]
+        )
+        result = await cursor.to_list(length=1)
+        if result and result[0].get("max_num") is not None:
+            return int(result[0]["max_num"])
+    except Exception:
+        # Fallback path for older Mongo setups or unexpected data.
+        users = await db.Users.find({"id": {"$regex": "^ADM\\d+$"}}, {"_id": 0, "id": 1}).to_list(length=100000)
+        max_num = 0
+        for user in users:
+            user_id = str(user.get("id") or "")
+            if not user_id.startswith("ADM"):
+                continue
+            try:
+                num = int(user_id[3:])
+                if num > max_num:
+                    max_num = num
+            except ValueError:
+                continue
+        return max_num
+
+    return 0
+
+
+async def _next_admin_id_global() -> str:
+    counter_key = "admin_id_seq"
+
+    existing_counter = await db.Counters.find_one({"_id": counter_key}, {"_id": 1})
+    if not existing_counter:
+        max_existing = await _get_max_existing_admin_number()
+        await db.Counters.update_one(
+            {"_id": counter_key},
+            {"$setOnInsert": {"value": max_existing}},
+            upsert=True,
+        )
+
+    counter = await db.Counters.find_one_and_update(
+        {"_id": counter_key},
+        {"$inc": {"value": 1}},
+        return_document=ReturnDocument.AFTER,
+    )
+
+    next_num = int((counter or {}).get("value") or 1)
+    return f"ADM{str(next_num).zfill(3)}"
+
+
+def _setup_token_expiry_minutes() -> int:
+    try:
+        value = int(SET_PASSWORD_TOKEN_EXPIRE_MINUTES)
+    except (TypeError, ValueError):
+        return 15
+    if value <= 0:
+        return 15
+    return value
+
+
+def _hash_setup_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+async def _create_setup_token_record(email: str, admin_id: str, store_id: str, org_id: str) -> str:
+    raw_token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(minutes=_setup_token_expiry_minutes())
+
+    await db.PasswordSetupTokens.update_many(
+        {
+            "email": email,
+            "admin_id": admin_id,
+            "store_id": store_id,
+            "org_id": org_id,
+            "used": False,
+        },
+        {
+            "$set": {
+                "used": True,
+                "used_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    await db.PasswordSetupTokens.insert_one(
+        {
+            "token_hash": _hash_setup_token(raw_token),
+            "email": email,
+            "admin_id": admin_id,
+            "store_id": store_id,
+            "org_id": org_id,
+            "used": False,
+            "created_at": datetime.utcnow(),
+            "expires_at": expires_at,
+            "used_at": None,
+        }
+    )
+
+    return raw_token
 
 # ───────────────────────── AUTH
 async def signup(data:SignupModel) -> Dict[str, Any]:
@@ -51,30 +175,85 @@ async def signup(data:SignupModel) -> Dict[str, Any]:
     }
 
 async def login(email: str, password: str) -> Optional[Dict[str, Any]]:
-    admin = await db.Users.find_one({"email": email})
-    role= admin.get("role") if admin else None
-    if not admin or not verify_password(password, admin["password"]):
+    users = await db.Users.find({"email": email}).to_list(length=20)
+    if not users:
         return None
-    
-    # Check if user is active (status should be 1)
-    user_status = admin.get("status", 0)
-    if user_status != 1:
-        raise HTTPException(status_code=403, detail="Account is inactive or disabled")
-    
+
+    matched_users = []
+    for user_doc in users:
+        try:
+            if verify_password(password, user_doc["password"]):
+                matched_users.append(user_doc)
+        except Exception:
+            continue
+
+    if not matched_users:
+        return None
+
+    if len(matched_users) == 1:
+        admin = matched_users[0]
+    else:
+        super_admin_matches = [u for u in matched_users if u.get("role") == "super_admin"]
+        if len(super_admin_matches) == 1:
+            admin = super_admin_matches[0]
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail="Multiple accounts matched these credentials. Please contact Super Admin.",
+            )
+
+    role = admin.get("role")
+
+    def _normalize_status(value: Any) -> int:
+        if isinstance(value, bool):
+            return 1 if value else 0
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            status_map = {
+                "1": 1,
+                "active": 1,
+                "enabled": 1,
+                "0": 0,
+                "inactive": 0,
+                "draft": 0,
+                "2": 2,
+                "disabled": 2,
+                "3": 3,
+                "deleted": 3,
+            }
+            return status_map.get(value.strip().lower(), 0)
+        return 0
+
+    store_status: int | None = None
     # Check if store is active (for non-super_admin users)
     if role != "super_admin":
         store_id = admin.get("store_id", "")
         if store_id:
             store = await db.Stores.find_one({"store_id": store_id})
             if not store:
-                raise HTTPException(status_code=404, detail="Store not found")
-            store_status = store.get("status", 0)
-            if store_status == 2:
-                raise HTTPException(status_code=403, detail="Store is disabled. Contact administrator.")
-            if store_status == 3:
-                raise HTTPException(status_code=403, detail="Store has been deleted. Contact administrator.")
+                raise HTTPException(
+                    status_code=403,
+                    detail="Access denied. Your store is not active. Please contact Super Admin.",
+                )
+            store_status = _normalize_status(store.get("status", 0))
             if store_status != 1:
-                raise HTTPException(status_code=403, detail="Store is not active")
+                raise HTTPException(
+                    status_code=403,
+                    detail="Access denied. Your store is not active. Please contact Super Admin.",
+                )
+
+    # Check if user is active. For store admins, self-heal stale status when store is active.
+    user_status = _normalize_status(admin.get("status", 0))
+    if user_status != 1:
+        if role == "admin" and store_status == 1:
+            await db.Users.update_one(
+                {"_id": admin["_id"]},
+                {"$set": {"status": 1, "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}},
+            )
+            admin["status"] = 1
+        else:
+            raise HTTPException(status_code=403, detail="Account is inactive or disabled")
 
     token = create_access_token({
         "email": email,
@@ -97,8 +276,22 @@ async def login(email: str, password: str) -> Optional[Dict[str, Any]]:
 
 async def fetch_user(request):
     user = request.state.user
-    user_id = user.get("email")
-    res = await db.Users.find_one({"email": user_id}, {"_id":0})
+
+    email = user.get("email")
+    role = user.get("role")
+    store_id = user.get("store_id")
+    org_id = user.get("org_id")
+
+    if role == "super_admin":
+        query = {"email": email}
+    else:
+        query = {
+            "email": email,
+            "store_id": store_id,
+            "org_id": org_id,
+        }
+
+    res = await db.Users.find_one(query, {"_id": 0})
     if not res:
         return HTTPException(401, "User not zFound")
     res.pop("password", None)  #Remove password from response
@@ -137,6 +330,185 @@ async def change_password(email: str, old_pw: str, new_pw: str) -> Dict[str, str
         {"$set": {"password": hash_password(new_pw), "updated_at": datetime.utcnow().isoformat()}}
     )
     return {"message": "Password updated"}
+
+
+async def set_password_with_token(token: str, new_password: str) -> Dict[str, str]:
+    token_hash = _hash_setup_token(str(token or ""))
+    now = datetime.utcnow()
+
+    token_doc = await db.PasswordSetupTokens.find_one_and_update(
+        {
+            "token_hash": token_hash,
+            "used": False,
+            "expires_at": {"$gt": now},
+        },
+        {
+            "$set": {
+                "used": True,
+                "used_at": now,
+            }
+        },
+        return_document=ReturnDocument.BEFORE,
+    )
+
+    if not token_doc:
+        known_token = await db.PasswordSetupTokens.find_one(
+            {"token_hash": token_hash},
+            {"_id": 0, "used": 1, "expires_at": 1},
+        )
+        if known_token and known_token.get("used") is True:
+            raise HTTPException(status_code=409, detail="This link has expired or already been used")
+        raise HTTPException(status_code=401, detail="This link has expired or already been used")
+
+    lookup_query = {
+        "email": token_doc.get("email"),
+        "store_id": token_doc.get("store_id"),
+        "org_id": token_doc.get("org_id"),
+    }
+    if token_doc.get("admin_id"):
+        lookup_query["id"] = token_doc.get("admin_id")
+
+    user = await db.Users.find_one(lookup_query)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found for setup token")
+
+    if user.get("first_login") is False:
+        raise HTTPException(status_code=409, detail="This link has expired or already been used")
+
+    await db.Users.update_one(
+        {"_id": user["_id"]},
+        {
+            "$set": {
+                "password": hash_password(new_password),
+                "first_login": False,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+        },
+    )
+    return {"message": "Password set successfully"}
+
+
+async def get_set_password_token_status(token: str) -> Dict[str, str]:
+    token_hash = _hash_setup_token(str(token or ""))
+    now = datetime.utcnow()
+
+    token_doc = await db.PasswordSetupTokens.find_one(
+        {"token_hash": token_hash},
+        {"_id": 0, "email": 1, "admin_id": 1, "store_id": 1, "org_id": 1, "used": 1, "expires_at": 1},
+    )
+
+    if not token_doc:
+        return {
+            "status": "invalid",
+            "message": "This link has expired or already been used",
+        }
+
+    lookup_query = {
+        "email": token_doc.get("email"),
+        "store_id": token_doc.get("store_id"),
+        "org_id": token_doc.get("org_id"),
+    }
+    if token_doc.get("admin_id"):
+        lookup_query["id"] = token_doc.get("admin_id")
+
+    user = await db.Users.find_one(lookup_query, {"_id": 1, "first_login": 1})
+    if not user:
+        return {
+            "status": "invalid",
+            "message": "This link has expired or already been used",
+        }
+
+    if token_doc.get("used") is True:
+        if user.get("first_login") is False:
+            return {
+                "status": "already_set",
+                "message": "Password is already set for this account.",
+            }
+        return {
+            "status": "invalid",
+            "message": "This link has expired or already been used",
+        }
+
+    if token_doc.get("expires_at") and token_doc.get("expires_at") <= now:
+        return {
+            "status": "invalid",
+            "message": "This link has expired or already been used",
+        }
+
+    if user.get("first_login") is False:
+        return {
+            "status": "already_set",
+            "message": "Password is already set for this account.",
+        }
+
+    return {
+        "status": "ready",
+        "message": "Setup link is valid.",
+    }
+
+
+async def resend_set_password_link(token: str) -> Dict[str, Any]:
+    token_hash = _hash_setup_token(str(token or ""))
+    token_doc = await db.PasswordSetupTokens.find_one(
+        {"token_hash": token_hash},
+        {"_id": 0, "email": 1, "admin_id": 1, "store_id": 1, "org_id": 1},
+    )
+
+    if not token_doc:
+        raise HTTPException(status_code=404, detail="Setup link record not found")
+
+    lookup_query = {
+        "email": token_doc.get("email"),
+        "store_id": token_doc.get("store_id"),
+        "org_id": token_doc.get("org_id"),
+    }
+    if token_doc.get("admin_id"):
+        lookup_query["id"] = token_doc.get("admin_id")
+
+    user = await db.Users.find_one(lookup_query, {"_id": 0, "name": 1, "first_login": 1, "email": 1})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found for setup link")
+
+    if user.get("first_login") is False:
+        raise HTTPException(status_code=409, detail="Password is already set for this account")
+
+    store = await db.Stores.find_one(
+        {
+            "store_id": token_doc.get("store_id"),
+            "org_id": token_doc.get("org_id"),
+        },
+        {"_id": 0, "store_name": 1},
+    )
+
+    name_data = user.get("name") or {}
+    admin_display_name = (
+        f"{str(name_data.get('first_name') or '').strip()} {str(name_data.get('last_name') or '').strip()}"
+    ).strip() or "Admin"
+
+    new_token = await _create_setup_token_record(
+        email=token_doc.get("email"),
+        admin_id=token_doc.get("admin_id"),
+        store_id=token_doc.get("store_id"),
+        org_id=token_doc.get("org_id"),
+    )
+
+    email_sent = await asyncio.to_thread(
+        send_welcome_email,
+        token_doc.get("email"),
+        None,
+        new_token,
+        admin_display_name,
+        (store or {}).get("store_name"),
+        token_doc.get("store_id"),
+    )
+
+    if not email_sent:
+        raise HTTPException(status_code=502, detail="Unable to send setup email right now. Please try again.")
+
+    return {
+        "message": "A new set-password link has been sent to your email",
+        "sent": True,
+    }
 
 # ───────────────────────── DASHBOARD
 async def get_dashboard_overview(_: Dict[str, Any]):
@@ -208,9 +580,26 @@ async def get_stores(
     skip = (page - 1) * page_size
     total = await db.Stores.count_documents(query)
     
-    # Add sorting for consistent results
-    stores = await db.Stores.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(page_size).to_list(page_size)
-    
+    # Sort by created_at first, then _id as a deterministic tie-breaker for same-day records.
+    stores = await db.Stores.find(query, {"_id": 0}).sort([("created_at", -1), ("_id", -1)]).skip(skip).limit(page_size).to_list(page_size)
+
+    # Backfill admin_id for legacy store records where it may be missing.
+    for store in stores:
+        if store.get("admin_id"):
+            continue
+
+        admin_user = await db.Users.find_one(
+            {
+                "org_id": store.get("org_id"),
+                "store_id": store.get("store_id"),
+                "role": "admin",
+            },
+            {"_id": 0, "id": 1},
+            sort=[("created_at", 1)],
+        )
+
+        if admin_user and admin_user.get("id"):
+            store["admin_id"] = admin_user["id"]
    
 
     return StoresResponse(
@@ -223,27 +612,49 @@ async def get_stores(
 async def create_store(data: CreateStoreModel, send_email):
     doc = data.model_dump()
     org_id = uuid.uuid4()
-    # Ensure unique store_id
-    if await db.Stores.find_one({"store_id": doc["store_id"]}):
-        doc["store_id"] = await _next_id(db.Stores, "store_id", "ST")
-        doc["org_id"] = str(org_id)
+
+    # Ensure store_id always exists and is unique.
+    requested_store_id = str(doc.get("store_id") or "").strip()
+    if not requested_store_id or await db.Stores.find_one({"store_id": requested_store_id}):
+        store_id = await _next_id(db.Stores, "store_id", "ST")
+    else:
+        store_id = requested_store_id
+
+    doc["store_id"] = store_id
+    doc["org_id"] = str(org_id)
+
     now = datetime.utcnow().strftime("%Y-%m-%d")
     doc["created_at"] = now
     doc["updated_at"] = now
-    store_id = doc["store_id"]
-    password = doc.get("password", "")
+
+    # Never store or send plaintext passwords for newly created admin users.
+    bootstrap_password = secrets.token_urlsafe(24)
+
+    generated_admin_id = await _next_admin_id_global()
+    while await db.Users.find_one(
+        {"id": generated_admin_id}
+    ):
+        generated_admin_id = await _next_admin_id_global()
 
     user_model = UserModel(
-        id=doc.get("admin_id"),
+        id=generated_admin_id,
         org_id=str(org_id),
         store_id=store_id,
-        password=hash_password(password),
+        password=hash_password(bootstrap_password),
         phone=doc.get("address", {}).get("phone"),
         email=doc.get("store_email"),
         name=doc.get("admin_name"),
         joining_date=now,
+        first_login=True,
         status=1
     )
+
+    admin_name_data = doc.get("admin_name") or {}
+    admin_display_name = (
+        f"{str(admin_name_data.get('first_name') or '').strip()} {str(admin_name_data.get('last_name') or '').strip()}"
+    ).strip()
+    if not admin_display_name:
+        admin_display_name = "Admin"
 
     # Check if user already exists
     existing_user = await db.Users.find_one({"email": user_model.email})
@@ -255,26 +666,50 @@ async def create_store(data: CreateStoreModel, send_email):
     if send_email:
         welcome_email_sent = False
         try:
-            welcome_email_sent = send_welcome_email(
-                to_email=doc.get("store_email"),
-                password=doc.get("password"),
+            setup_token = await _create_setup_token_record(
+                email=doc.get("store_email"),
+                admin_id=generated_admin_id,
+                store_id=store_id,
+                org_id=str(org_id),
+            )
+            welcome_email_sent = await asyncio.to_thread(
+                send_welcome_email,
+                doc.get("store_email"),
+                None,
+                setup_token,
+                admin_display_name,
+                doc.get("store_name"),
+                store_id,
             )
             if not welcome_email_sent:
-                print("Warning: Welcome email could not be sent during store creation")
+                logger.warning(
+                    "Welcome email could not be sent during store creation recipient=%s",
+                    doc.get("store_email"),
+                )
         except Exception as e:
-            print(f"Warning: Failed to send credentials email during store creation: {str(e)}")
+            logger.warning(
+                "Failed to dispatch credentials email recipient=%s error=%s",
+                doc.get("store_email"),
+                str(e),
+            )
 
     # Insert user and store regardless of email delivery outcome.
     user_doc = user_model.model_dump()
     user_doc["created_at"] = now
     user_doc["updated_at"] = now
+
+    # Store records should not persist credential fields.
+    doc.pop("password", None)
+    doc["admin_id"] = generated_admin_id
+
     await db.Users.insert_one(user_doc)
     await db.Stores.insert_one(doc)
 
     return {
         "store_id": store_id,
+        "admin_id": generated_admin_id,
         "store_email": doc.get("store_email"),
-        "password": password,
+        # "password": password,
         "welcome_email_sent": welcome_email_sent,
     }
 
@@ -425,21 +860,25 @@ async def update_store_status(store_id: str, status: int)-> int:
         {"store_id": store_id},
         {"$set": {"status": status, "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
     )
+
+    if res.matched_count == 0:
+        return 0
     
-    # When disabling a store (status=2), also disable all its users
-    if status == 2 and res.modified_count > 0:
+    # When disabling a store (status=2), also disable all its users.
+    # Use matched_count semantics so user status can be repaired even when store status is unchanged.
+    if status == 2:
         await db.Users.update_many(
             {"store_id": store_id},
             {"$set": {"status": 0, "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
         )
     # When re-activating a store (status=1), reactivate all its users
-    elif status == 1 and res.modified_count > 0:
+    elif status == 1:
         await db.Users.update_many(
             {"store_id": store_id},
             {"$set": {"status": 1, "updated_at": datetime.utcnow().strftime("%Y-%m-%d")}}
         )
     
-    return res.modified_count
+    return 1
 
 # ───────────────────────── CATEGORY / SUBCATEGORY
 

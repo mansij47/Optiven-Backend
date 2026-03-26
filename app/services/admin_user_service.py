@@ -1,4 +1,6 @@
 import uuid
+import asyncio
+import logging
 from bson import ObjectId
 from fastapi import HTTPException, Request
 from datetime import datetime
@@ -8,6 +10,9 @@ from app.db import db
 from app.models.super_admin_models import UserModel
 from app.utils.auth import hash_password
 from app.utils.email_utils import send_welcome_email
+
+
+logger = logging.getLogger(__name__)
 
 
 async def create_department_user(data, user_info):
@@ -89,11 +94,13 @@ async def create_department_user(data, user_info):
         await db.Users.insert_one(user_doc.model_dump())
 
         # Push employee reference into the store's departments array in Stores collection
+        store_name = None
         try:
             # First check if store exists and initialize departments array if needed
             store = await db.Stores.find_one({"org_id": org_id, "store_id": store_id})
             if not store:
                 raise HTTPException(status_code=404, detail="Store not found")
+            store_name = store.get("store_name")
             
             # Initialize departments array if it doesn't exist
             if "departments" not in store:
@@ -110,16 +117,38 @@ async def create_department_user(data, user_info):
         except Exception as e:
             # If departments update fails, we should still create the user
             # but log the error for debugging
-            print(f"Warning: Failed to update store departments: {str(e)}")
+            logger.warning("Failed to update store departments store_id=%s error=%s", store_id, str(e))
             # Don't fail the entire operation for this
 
         # Send welcome email with original password.
         # Do not fail employee creation if email transport fails in production.
         email_sent = False
         try:
-            email_sent = send_welcome_email(to_email=normalized_email, password=data.password)
+            employee_display_name = f"{data.first_name} {data.last_name}".strip()
+            email_sent = await asyncio.to_thread(
+                send_welcome_email,
+                normalized_email,
+                data.password,
+                None,
+                employee_display_name,
+                store_name,
+                store_id,
+                "employee",
+                data.role.capitalize(),
+            )
+            logger.info(
+                "Employee welcome email status employee_id=%s recipient=%s sent=%s",
+                new_id,
+                normalized_email,
+                email_sent,
+            )
         except Exception as e:
-            print(f"Warning: Failed to send welcome email to {normalized_email}: {str(e)}")
+            logger.warning(
+                "Failed to send welcome email employee_id=%s recipient=%s error=%s",
+                new_id,
+                normalized_email,
+                str(e),
+            )
 
         if email_sent:
             message = f"{data.role.capitalize()} employee created and email sent successfully"
