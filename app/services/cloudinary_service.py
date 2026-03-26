@@ -27,6 +27,7 @@ import httpx
 import io
 import os
 import tempfile
+import logging
 from typing import Optional, Tuple, AsyncIterator
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
@@ -37,6 +38,9 @@ from app.config import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 # ===================== CLOUDINARY CONFIGURATION =====================
 def configure_cloudinary():
     """
@@ -44,7 +48,7 @@ def configure_cloudinary():
     Call this once at application startup.
     """
     if not all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
-        print("⚠️  Cloudinary credentials not fully configured. PDF cloud storage disabled.")
+        logger.warning("Cloudinary credentials are not fully configured. PDF cloud storage is disabled.")
         return False
     
     cloudinary.config(
@@ -53,7 +57,7 @@ def configure_cloudinary():
         api_secret=CLOUDINARY_API_SECRET,
         secure=True
     )
-    print("✅ Cloudinary configured successfully")
+    logger.info("Cloudinary configured successfully")
     return True
 
 
@@ -82,7 +86,7 @@ def upload_pdf_from_memory(
         None if upload fails or Cloudinary not configured
     """
     if not CLOUDINARY_ENABLED:
-        print("⚠️  Cloudinary not enabled, skipping upload")
+        logger.warning("Cloudinary is not enabled, skipping upload from memory")
         return None
     
     try:
@@ -111,11 +115,11 @@ def upload_pdf_from_memory(
             **upload_options
         )
         
-        print(f"✅ PDF uploaded to Cloudinary: {result.get('secure_url', 'URL not available')}")
+        logger.info("PDF uploaded to Cloudinary url=%s", result.get("secure_url", "URL not available"))
         return result
     
     except Exception as e:
-        print(f"❌ Cloudinary upload failed: {str(e)}")
+        logger.error("Cloudinary upload from memory failed error=%s", str(e))
         return None
 
 
@@ -136,7 +140,7 @@ def upload_pdf_from_path(
         dict with upload result or None if failed
     """
     if not CLOUDINARY_ENABLED:
-        print("  Cloudinary not enabled, skipping upload")
+        logger.warning("Cloudinary is not enabled, skipping upload from path")
         return None
     
     try:
@@ -156,25 +160,25 @@ def upload_pdf_from_path(
             base_name = os.path.splitext(filename)[0]
             upload_options["public_id"] = base_name
         
-        print(f"🔧 Uploading with options: {upload_options}")
+        logger.info("Uploading PDF to Cloudinary options=%s", upload_options)
         result = cloudinary.uploader.upload(file_path, **upload_options)
         
         url = result.get('secure_url', '')
         resource_type = result.get('resource_type', 'unknown')
-        print(f" Uploaded as {resource_type}: {url}")
+        logger.info("Cloudinary upload completed resource_type=%s url=%s", resource_type, url)
         
         # If Cloudinary returned image type, convert URL to raw
         if '/image/' in url and resource_type == 'image':
-            print(f" Cloudinary uploaded as image, converting URL to raw...")
+            logger.warning("Cloudinary returned image resource for PDF. Converting URL to raw path.")
             # Replace image with raw in URL
             raw_url = url.replace('/image/', '/raw/')
             result['secure_url'] = raw_url
-            print(f" Converted to raw URL: {raw_url}")
+            logger.info("Converted Cloudinary URL to raw url=%s", raw_url)
         
         return result
     
     except Exception as e:
-        print(f"❌ Cloudinary upload failed: {str(e)}")
+        logger.error("Cloudinary upload from path failed error=%s", str(e))
         return None
 
 
@@ -221,12 +225,12 @@ def generate_signed_url(public_id: str, expires_in: int = 3600) -> str:
             sign_url=True,
             secure=True
         )
-        print(f"   Generated signed URL: {url}")
+        logger.debug("Generated signed Cloudinary URL")
         return url
     except Exception as e:
-        print(f" Failed to generate signed URL: {e}")
+        logger.error("Failed to generate signed Cloudinary URL error=%s", e)
         import traceback
-        print(traceback.format_exc())
+        logger.debug("Signed URL traceback=%s", traceback.format_exc())
         return None
 
 
@@ -265,7 +269,7 @@ async def stream_pdf_from_url(
             
             if head_response.status_code == 401:
                 # Try signed URL for authenticated resources
-                print(f" URL requires authentication (401), trying signed URL...")
+                logger.warning("Cloudinary URL requires authentication (401). Trying signed URL fallback.")
                 public_id = extract_public_id_from_url(cloudinary_url)
                 if public_id:
                     signed = generate_signed_url(public_id)
@@ -273,10 +277,10 @@ async def stream_pdf_from_url(
                         # Verify signed URL works
                         signed_response = await client.head(signed, follow_redirects=True)
                         if signed_response.status_code == 200:
-                            print(f" Signed URL works for {public_id}")
+                            logger.info("Signed Cloudinary URL validation succeeded public_id=%s", public_id)
                             stream_url = signed
                         else:
-                            print(f" Signed URL also failed: {signed_response.status_code}")
+                            logger.warning("Signed Cloudinary URL validation failed status=%s", signed_response.status_code)
                             raise HTTPException(
                                 status_code=404,
                                 detail="PDF not found in cloud storage. It may need to be regenerated."
@@ -292,13 +296,17 @@ async def stream_pdf_from_url(
                         detail="PDF not found in cloud storage. It may need to be regenerated."
                     )
             elif head_response.status_code != 200:
-                print(f" Cloudinary URL validation failed: {head_response.status_code} for {cloudinary_url}")
+                logger.warning(
+                    "Cloudinary URL validation failed status=%s url=%s",
+                    head_response.status_code,
+                    cloudinary_url,
+                )
                 raise HTTPException(
                     status_code=404,
                     detail="PDF not found in cloud storage. It may need to be regenerated."
                 )
         except httpx.RequestError as e:
-            print(f" Cloudinary URL request error: {str(e)}")
+            logger.error("Cloudinary URL request error error=%s", str(e))
             raise HTTPException(
                 status_code=503,
                 detail="Unable to connect to cloud storage. Please try again."
@@ -376,7 +384,7 @@ def delete_pdf_from_cloudinary(public_id: str, folder: str = None) -> bool:
         return result.get("result") == "ok"
     
     except Exception as e:
-        print(f" Cloudinary delete failed: {str(e)}")
+        logger.error("Cloudinary delete failed error=%s", str(e))
         return False
 
 
@@ -505,13 +513,13 @@ async def invalidate_pdf_cache(
                 filter_query,
                 {"$unset": {pdf_url_field: ""}}
             )
-            print(f"✅ PDF cache invalidated for {filter_query}")
+            logger.info("PDF cache invalidated filter=%s", filter_query)
             return True
         
         return False
     
     except Exception as e:
-        print(f" Failed to invalidate PDF cache: {str(e)}")
+        logger.error("Failed to invalidate PDF cache error=%s", str(e))
         return False
 
 
@@ -526,6 +534,6 @@ def clear_pdf_url_sync(collection, filter_query: dict, pdf_url_field: str = "pdf
     try:
         from pymongo import MongoClient
         # This is a placeholder - in async code use invalidate_pdf_cache instead
-        print(f" Sync PDF URL clear requested for {filter_query}")
+        logger.info("Sync PDF URL clear requested filter=%s", filter_query)
     except Exception as e:
-        print(f" Failed to clear PDF URL: {str(e)}")
+        logger.error("Failed to clear PDF URL sync helper error=%s", str(e))

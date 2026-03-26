@@ -143,7 +143,7 @@ async def list_stores(
         page_size=page_size
     )
 @router.post("/store")
-async def create_store(store_data: CreateStoreModel , send_email: bool = Query(False)):
+async def create_store(store_data: CreateStoreModel , send_email: bool = Query(True)):
     new_id = await svc.create_store(store_data, send_email)
     return {"message": "Store created", "store": new_id}
 

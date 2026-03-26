@@ -19,6 +19,8 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 LOGIN_URL = os.getenv("LOGIN_URL", "http://localhost:5173/login")
+SET_PASSWORD_URL = os.getenv("SET_PASSWORD_URL", "http://localhost:5173/set-password")
+SET_PASSWORD_TOKEN_EXPIRE_MINUTES = _get_int_env("SET_PASSWORD_TOKEN_EXPIRE_MINUTES", 1440)
 
 EMAIL_HOST = os.getenv("EMAIL_HOST")
 EMAIL_PORT = _get_int_env("EMAIL_PORT", 587)

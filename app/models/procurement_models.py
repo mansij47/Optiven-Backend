@@ -183,6 +183,7 @@ class ReturnToVendorResponse(BaseModel):
     vendor_name: Optional[str] = ""
     product_name: str
     delivery_date: Optional[str] = ""
+    return_date: Optional[str] = ""
     status: str
     return_amount: Optional[str] = "0"
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -524,7 +525,7 @@ class PurchaseOrderSubmitRequest(BaseModel):
 
 # Purchase Order Email
 class SendPurchaseOrderEmail(BaseModel):
-    order_id: str
+    order_id: Optional[str] = None
     recipient_emails: List[EmailStr]  # Can send to vendor_email and/or secondary_email
     subject: Optional[str] = "Purchase Order"
     message: Optional[str] = None  # Optional custom message

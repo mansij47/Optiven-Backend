@@ -7,6 +7,7 @@ from app.models.admin_login_model import LoginModel
 from typing import Optional,List
 from datetime import datetime
 from app import db
+import logging
 import traceback
 from jose import jwt, JWTError
 from bson import ObjectId
@@ -38,6 +39,8 @@ from app.services.notification_service import (
 
 # Importing the admin setup model and service
 from app.models.admin_setting_model import AdminSetupSettingRequest
+
+logger = logging.getLogger(__name__)
 from app.services.admin_setting_service import update_admin_setting, get_admin_setting
 
 # Importing the category model and service
@@ -548,10 +551,13 @@ async def add_employee(data: DepartmentUserCreate, request: Request):
     )
 
     # Step 4: Send Notification (e.g., to admin or other roles)
-    await create_notification(
-        notification=notification,
-        admin=True  # You can toggle other roles too
-    )
+    try:
+        await create_notification(
+            notification=notification,
+            admin=True  # You can toggle other roles too
+        )
+    except Exception as exc:
+        logger.warning("Employee created but notification failed error=%s", exc)
 
     # Step 5: Return original employee creation response
     return employee_response

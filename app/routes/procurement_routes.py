@@ -394,6 +394,12 @@ async def send_purchase_order_email(
     if user.get("role") != "procurement":
         raise HTTPException(status_code=403, detail="Only procurement users are allowed.")
 
+    if email_data.order_id and str(email_data.order_id).strip() != str(order_id).strip():
+        raise HTTPException(
+            status_code=400,
+            detail="order_id mismatch between URL and request body",
+        )
+
     store_id = user.get("store_id")
     return await procurement_purchase_services.send_purchase_order_email_service(
         order_id, store_id, email_data.recipient_emails, email_data.subject, email_data.message

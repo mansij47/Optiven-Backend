@@ -2,6 +2,7 @@ from app.db import db
 from fastapi import HTTPException
 from app.models.procurement_models import ReturnToVendorResponse
 from bson import ObjectId
+from datetime import datetime
 
 return_collection = db["ReturnToVendor"]
 
@@ -18,6 +19,15 @@ status_map = {
     "returned": "returned",
     "disabled": "disabled"
 }
+
+
+def _format_table_date(date_value) -> str:
+    if not date_value:
+        return ""
+    if isinstance(date_value, datetime):
+        return date_value.strftime("%Y-%m-%d")
+    text = str(date_value)
+    return text.split("T")[0] if "T" in text else text
 
 # # ✅ List of Return To Vendor
 async def get_all_returns(store_id: str):
@@ -44,6 +54,16 @@ async def get_all_returns(store_id: str):
                 # Legacy numeric values - convert to string then capitalize
                 normalized = status_map.get(raw_status, "pending")
                 item["status"] = normalized.capitalize()
+
+            # Keep delivery_date as-is and provide return_date for table usage.
+            item["delivery_date"] = _format_table_date(item.get("delivery_date"))
+
+            status_key = normalized.lower()
+            if status_key == "completed":
+                return_date_source = item.get("updated_at") or item.get("created_at")
+            else:
+                return_date_source = item.get("created_at")
+            item["return_date"] = _format_table_date(return_date_source)
             
             # ✅ Fetch item details from ProductItems if returnable_item_ids exist
             returnable_item_ids = item.get("returnable_item_ids", [])
@@ -180,7 +200,12 @@ async def mark_return_received(store_id: str, return_ids: list):
             # Update status to completed
             result = await return_collection.update_one(
                 {"store_id": store_id, "return_id": return_id},
-                {"$set": {"status": "completed"}}
+                {
+                    "$set": {
+                        "status": "completed",
+                        "updated_at": datetime.utcnow(),
+                    }
+                }
             )
             
             if result.modified_count > 0:

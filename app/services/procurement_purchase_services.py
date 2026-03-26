@@ -1,3 +1,6 @@
+import asyncio
+import logging
+
 from fastapi import HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from app.db import db
@@ -16,6 +19,8 @@ stores_collection = db["Stores"]
 # Maps stored integer values to readable status
 RECEIVED_MAP = {0: "Waiting", 1: "Received"}
 VALIDATION_MAP = {0: "Pending", 1: "Completed"}
+
+logger = logging.getLogger(__name__)
 
 
 def round_purchase_order_prices(order: dict) -> dict:
@@ -141,7 +146,7 @@ async def generate_purchase_order_pdf_service(order_id: str, store_id: str):
     existing_pdf_url = order.get("pdf_url")
     if existing_pdf_url and is_cloudinary_configured():
         try:
-            print(f"✅ Using cached PDF from Cloudinary for order {order_id}")
+            logger.info("Using cached Cloudinary PDF order_id=%s", order_id)
             return await stream_pdf_from_url(
                 cloudinary_url=existing_pdf_url,
                 filename=f"PurchaseOrder_{order_id}.pdf",
@@ -149,24 +154,24 @@ async def generate_purchase_order_pdf_service(order_id: str, store_id: str):
             )
         except HTTPException as e:
             # Cached URL is invalid (404 or other error) - clear it and regenerate
-            print(f"⚠️ Cached PDF URL invalid for order {order_id}: {e.detail}. Regenerating...")
+            logger.warning("Cached Cloudinary PDF invalid order_id=%s error=%s; regenerating", order_id, e.detail)
             await purchase_orders_collection.update_one(
                 {"order_id": order_id, "store_id": store_id},
                 {"$unset": {"pdf_url": ""}}
             )
     
     # Fetch store name from Stores collection
-    print(f"🔍 Fetching store name for store_id: {store_id}")
+    logger.debug("Fetching store name store_id=%s", store_id)
     store = await stores_collection.find_one({"store_id": store_id}, {"_id": 0, "store_name": 1})
-    print(f"🔍 Store found: {store}")
+    logger.debug("Store lookup result store_id=%s found=%s", store_id, bool(store))
     if store and "store_name" in store:
         order["store_name"] = store["store_name"]
-        print(f"✅ Added store_name to order: {store['store_name']}")
+        logger.info("Added store_name to order order_id=%s store_name=%s", order_id, store["store_name"])
     else:
-        print(f"❌ Store name not found for store_id: {store_id}")
+        logger.warning("Store name not found store_id=%s", store_id)
         order["store_name"] = "-"
     
-    print(f"🔍 Order data before Pydantic model: store_name = {order.get('store_name', 'NOT SET')}")
+    logger.debug("Order data before model order_id=%s store_name=%s", order_id, order.get("store_name", "NOT SET"))
     
     # Normalize status fields
     raw_received = order.get("received_status", 0)
@@ -197,7 +202,7 @@ async def generate_purchase_order_pdf_service(order_id: str, store_id: str):
         
         # Upload to Cloudinary if configured
         if is_cloudinary_configured():
-            print(f"📤 Uploading PDF to Cloudinary for order {order_id}")
+            logger.info("Uploading purchase order PDF to Cloudinary order_id=%s", order_id)
             upload_result = upload_pdf_from_path(
                 file_path=pdf_path,
                 folder="optiven_pdfs/purchase_orders",
@@ -212,11 +217,11 @@ async def generate_purchase_order_pdf_service(order_id: str, store_id: str):
                     {"order_id": order_id, "store_id": store_id},
                     {"$set": {"pdf_url": cloudinary_url}}
                 )
-                print(f"✅ PDF URL saved to database: {cloudinary_url}")
+                logger.info("Saved Cloudinary PDF URL to DB order_id=%s", order_id)
                 
                 # Return the local file directly (Cloudinary URL will be used on next request)
                 # This avoids CDN propagation delay issues
-                print(f"✅ Returning freshly generated PDF for order {order_id}")
+                logger.info("Returning freshly generated PDF file order_id=%s", order_id)
                 return FileResponse(
                     path=pdf_path,
                     media_type='application/pdf',
@@ -227,7 +232,7 @@ async def generate_purchase_order_pdf_service(order_id: str, store_id: str):
                 )
         
         # Fallback: Return local file if Cloudinary upload failed or not configured
-        print(f"⚠️ Using local file fallback for order {order_id}")
+        logger.warning("Using local PDF fallback order_id=%s", order_id)
         return FileResponse(
             path=pdf_path,
             media_type='application/pdf',
@@ -253,9 +258,42 @@ async def send_purchase_order_email_service(order_id: str, store_id: str, recipi
     
     if not order:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
-    
+
+    normalized_recipients = []
+    seen_recipients = set()
+    for raw_email in recipient_emails or []:
+        email = str(raw_email).strip().lower()
+        if not email or email in seen_recipients:
+            continue
+        normalized_recipients.append(email)
+        seen_recipients.add(email)
+
+    allowed_recipients = set()
+    primary_email = str(order.get("vendor_email") or "").strip().lower()
+    secondary_email = str(order.get("secondary_email") or "").strip().lower()
+    if primary_email:
+        allowed_recipients.add(primary_email)
+    if secondary_email:
+        allowed_recipients.add(secondary_email)
+
+    if not allowed_recipients:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid vendor recipient email is configured on this purchase order",
+        )
+
+    invalid_recipients = [email for email in normalized_recipients if email not in allowed_recipients]
+    if invalid_recipients:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only purchase-order vendor emails are allowed. "
+                f"Invalid recipients: {', '.join(invalid_recipients)}"
+            ),
+        )
+
     # Validate that at least one email is provided
-    if not recipient_emails or len(recipient_emails) == 0:
+    if not normalized_recipients:
         raise HTTPException(status_code=400, detail="At least one recipient email is required")
 
     # Handle received_status (supports both int and string)
@@ -281,14 +319,18 @@ async def send_purchase_order_email_service(order_id: str, store_id: str, recipi
     try:
         # Create response model for PDF generation
         order_response = PurchaseOrderDetailResponse(**order)
-        pdf_path = generate_purchase_order_pdf_from_schema(order_response, output_dir=None)
+        pdf_path = await asyncio.to_thread(
+            generate_purchase_order_pdf_from_schema,
+            order_response,
+            None,
+        )
         
         if not os.path.exists(pdf_path):
-            print(f"⚠️ Failed to generate PDF for email attachment")
+            logger.warning("Failed to generate PDF for PO email attachment order_id=%s", order_id)
             pdf_path = None
             
     except Exception as pdf_error:
-        print(f"⚠️ Error generating PDF for email attachment: {pdf_error}")
+        logger.warning("Error generating PDF for PO email attachment order_id=%s error=%s", order_id, pdf_error)
         pdf_path = None
     
     # Format delivery date if exists
@@ -309,29 +351,57 @@ async def send_purchase_order_email_service(order_id: str, store_id: str, recipi
     
     try:
         # Send emails with PDF attachment
-        email_result = send_purchase_order_email(
-            order_data=order,
-            recipient_emails=recipient_emails,
-            subject=subject,
-            custom_message=custom_message,
-            pdf_path=pdf_path
+        email_result = await asyncio.to_thread(
+            send_purchase_order_email,
+            order,
+            normalized_recipients,
+            subject,
+            custom_message,
+            pdf_path,
         )
-        
+
         # Clean up temporary PDF file
         if pdf_path and os.path.exists(pdf_path):
             try:
                 os.remove(pdf_path)
-                print(f"🗑️ Cleaned up temporary PDF file: {pdf_path}")
+                logger.debug("Cleaned temporary PO PDF file path=%s", pdf_path)
             except Exception as cleanup_error:
-                print(f"⚠️ Failed to clean up PDF file: {cleanup_error}")
+                logger.warning("Failed to clean temporary PO PDF file path=%s error=%s", pdf_path, cleanup_error)
         
         if email_result["success"]:
-            attachment_note = " with PDF attachment" if pdf_path else " (PDF generation failed)"
+            success_recipients = email_result.get("successful_email_list", [])
+            failed_recipients = email_result.get("failed_email_list", [])
+            total_recipients = email_result.get("total_emails", len(normalized_recipients))
+            successful_count = email_result.get("successful_emails", 0)
+            failed_count = email_result.get("failed_emails", 0)
+            delivery_status = "all_success" if failed_count == 0 else "partial_success"
+
+            message = (
+                f"Purchase order email delivered to {successful_count} out of {total_recipients} recipient(s)."
+            )
+            if failed_count:
+                failed_addresses = ", ".join(item.get("email", "") for item in failed_recipients if item.get("email"))
+                if failed_addresses:
+                    message += f" Failed recipient(s): {failed_addresses}."
+
+            warnings = []
+            if not email_result.get("attachment_included"):
+                if email_result.get("attachment_error"):
+                    warnings.append(f"PDF attachment could not be added: {email_result.get('attachment_error')}")
+                elif not pdf_path:
+                    warnings.append("PDF attachment was not included because PDF generation failed.")
+
             return {
-                "message": f"Purchase order sent successfully to {email_result['successful_emails']} out of {email_result['total_emails']} recipients{attachment_note}",
+                "status": delivery_status,
+                "message": message,
                 "order_id": order_id,
+                "requested_emails": normalized_recipients,
+                "successful_emails": success_recipients,
+                "failed_emails": failed_recipients,
                 "email_results": email_result,
-                "pdf_attached": pdf_path is not None
+                "pdf_attached": bool(email_result.get("attachment_included")),
+                "warnings": warnings,
+                "email_sent": True,
             }
         else:
             first_error = next(
@@ -340,11 +410,27 @@ async def send_purchase_order_email_service(order_id: str, store_id: str, recipi
                     for item in email_result.get("details", [])
                     if item.get("status") == "failed" and item.get("error")
                 ),
-                "Unknown SMTP error"
+                "Unknown email provider error"
+            )
+            logger.warning(
+                "PO email failed order_id=%s store_id=%s reason=%s",
+                order_id,
+                store_id,
+                first_error,
             )
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to send emails. All {email_result['total_emails']} attempts failed. Reason: {first_error}",
+                status_code=502,
+                detail={
+                    "status": "all_failed",
+                    "message": "Purchase order email delivery failed for all recipients.",
+                    "reason": first_error,
+                    "order_id": order_id,
+                    "requested_emails": normalized_recipients,
+                    "successful_emails": [],
+                    "failed_emails": email_result.get("failed_email_list", []),
+                    "pdf_attached": bool(email_result.get("attachment_included")),
+                    "pdf_error": email_result.get("attachment_error") or (None if pdf_path else "PDF generation failed"),
+                },
             )
 
     except HTTPException:
